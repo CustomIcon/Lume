@@ -1,0 +1,144 @@
+name: Build and Release DMG
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: [macos, macos-runner]
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Locate Xcode
+        run: |
+          XCODE_PATH=$(mdfind "kMDItemCFBundleIdentifier == 'com.apple.dt.Xcode'" | head -n 1)
+          if [ -z "$XCODE_PATH" ]; then XCODE_PATH="/Applications/Xcode.app"; fi
+          echo "Found Xcode at $XCODE_PATH"
+          echo "DEVELOPER_DIR=$XCODE_PATH/Contents/Developer" >> $GITHUB_ENV
+
+      - name: Cache SPM
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: ${{ runner.os }}-spm-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Archive App
+        run: |
+          xcodebuild archive \
+            -project Lume.xcodeproj \
+            -scheme Lume \
+            -configuration Release \
+            -archivePath ./build/Lume.xcarchive \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
+
+      # FIX 3: Convert Logo.svg → PNG → .icns and embed it in the bundle
+      - name: Embed App Icon
+        run: |
+          APP="./build/Lume.xcarchive/Products/Applications/Lume.app"
+          SOURCE_SVG="Lume/Assets.xcassets/Logo.imageset/Logo.svg"
+
+          if [ ! -f "$SOURCE_SVG" ]; then
+            echo "Error: Logo.svg not found at $SOURCE_SVG"
+            exit 1
+          fi
+
+          # librsvg gives the highest-quality SVG rasterisation on macOS
+          brew install librsvg
+
+          # Render SVG at 1024×1024 — rsvg-convert preserves aspect ratio with -w/-h
+          SOURCE_PNG=$(mktemp).png
+          rsvg-convert -w 1024 -h 1024 "$SOURCE_SVG" -o "$SOURCE_PNG"
+
+          ICONSET=$(mktemp -d)/AppIcon.iconset
+          mkdir -p "$ICONSET"
+
+          sips -z 16   16   "$SOURCE_PNG" --out "$ICONSET/icon_16x16.png"
+          sips -z 32   32   "$SOURCE_PNG" --out "$ICONSET/icon_16x16@2x.png"
+          sips -z 32   32   "$SOURCE_PNG" --out "$ICONSET/icon_32x32.png"
+          sips -z 64   64   "$SOURCE_PNG" --out "$ICONSET/icon_32x32@2x.png"
+          sips -z 128  128  "$SOURCE_PNG" --out "$ICONSET/icon_128x128.png"
+          sips -z 256  256  "$SOURCE_PNG" --out "$ICONSET/icon_128x128@2x.png"
+          sips -z 256  256  "$SOURCE_PNG" --out "$ICONSET/icon_256x256.png"
+          sips -z 512  512  "$SOURCE_PNG" --out "$ICONSET/icon_256x256@2x.png"
+          sips -z 512  512  "$SOURCE_PNG" --out "$ICONSET/icon_512x512.png"
+          sips -z 1024 1024 "$SOURCE_PNG" --out "$ICONSET/icon_512x512@2x.png"
+
+          iconutil -c icns "$ICONSET" -o AppIcon.icns
+
+          mkdir -p "$APP/Contents/Resources"
+          cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+
+          # Set CFBundleIconFile in Info.plist (update if already present, add if missing)
+          /usr/libexec/PlistBuddy -c "Set :CFBundleIconFile AppIcon" \
+            "$APP/Contents/Info.plist" 2>/dev/null || \
+          /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string AppIcon" \
+            "$APP/Contents/Info.plist"
+
+          echo "Icon embedded successfully"
+
+      # FIX 2: Ad-hoc sign so Gatekeeper doesn't quarantine the app
+      - name: Ad-hoc Code Sign
+        run: |
+          APP="./build/Lume.xcarchive/Products/Applications/Lume.app"
+
+          # Deep ad-hoc sign with hardened runtime
+          codesign --force --deep --sign - \
+            --options runtime \
+            "$APP"
+
+          codesign --verify --deep --strict "$APP"
+          echo "Ad-hoc signing complete"
+
+      # FIX 1 & 2: Prepare DMG — keep the Applications symlink this time
+      - name: Prepare DMG Content
+        run: |
+          mkdir -p ./dmg_source
+          cp -R ./build/Lume.xcarchive/Products/Applications/Lume.app ./dmg_source/
+
+          # Applications symlink lets users drag-and-drop to install
+          # NOTE: do NOT remove this before packing (that was the original bug)
+          ln -s /Applications ./dmg_source/Applications
+
+          echo "DMG staging contents:"
+          ls -la ./dmg_source
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create DMG
+        run: |
+          echo "Building hybrid image..."
+          # makehybrid is more robust in restricted CI environments
+          hdiutil makehybrid \
+            -o Lume.dmg \
+            -hfs \
+            -hfs-volume-name "Lume" \
+            -hfs-openfolder ./dmg_source \
+            ./dmg_source
+          
+          echo "Converting to compressed DMG..."
+          hdiutil convert Lume.dmg -format UDZO -ov -o Lume_final.dmg
+          mv Lume_final.dmg Lume.dmg
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.sha }}
+          name: Build ${{ github.sha }}
+          body: |
+            Automated build from commit ${{ github.sha }}
+          files: Lume.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
