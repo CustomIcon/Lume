@@ -38,7 +38,8 @@ A modern, native Jellyfin client for macOS, designed with a focus on aesthetics,
 
 1.  Download the latest **Lume.dmg** from the [Releases](https://git.cubable.date/CustomIcon/Lume/releases) page.
 2.  Open the DMG and drag **Lume** to your **Applications** folder.
-3.  Launch Lume and enter your server URL to begin the onboarding process.
+3.  Open up `Terminal` and run the following command: `xattr -d com.apple.quarantine /Applications/Lume.app`
+4.  Launch Lume and enter your server URL to begin the onboarding process.
 
 ## 🛠 Development
 
