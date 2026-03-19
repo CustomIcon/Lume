@@ -88,18 +88,18 @@ jobs:
 
           echo "Icon embedded successfully"
 
-      # FIX 2: Ad-hoc sign so Gatekeeper doesn't quarantine the app
-      - name: Ad-hoc Code Sign
+      - name: Code Sign with Developer Identity
         run: |
           APP="./build/Lume.xcarchive/Products/Applications/Lume.app"
+          IDENTITY="Apple Development: custom.icon@vk.com (8UF52HAQA4)"
 
-          # Deep ad-hoc sign with hardened runtime
-          codesign --force --deep --sign - \
+          echo "Signing with identity: $IDENTITY"
+          codesign --force --deep --sign "$IDENTITY" \
             --options runtime \
             "$APP"
 
           codesign --verify --deep --strict "$APP"
-          echo "Ad-hoc signing complete"
+          echo "Signing complete"
 
       # FIX 1 & 2: Prepare DMG — keep the Applications symlink this time
       - name: Prepare DMG Content
