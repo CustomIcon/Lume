@@ -1,7 +1,5 @@
 import SwiftUI
 
-// MARK: - Theme Flavor
-
 enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
     // Catppuccin
     case mocha = "Catppuccin Mocha"
@@ -203,8 +201,6 @@ enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
     }
 }
 
-// MARK: - Theme Category
-
 enum ThemeCategory: String, CaseIterable, Identifiable {
     case catppuccin = "Catppuccin"
     case nord = "Nord"
@@ -241,8 +237,6 @@ enum ThemeCategory: String, CaseIterable, Identifiable {
     }
 }
 
-// MARK: - Theme Manager
-
 @Observable
 final class ThemeManager {
     static let shared = ThemeManager()
@@ -260,8 +254,6 @@ final class ThemeManager {
         }
     }
 }
-
-// MARK: - Color Hex Init
 
 extension Color {
     init(hex: String) {

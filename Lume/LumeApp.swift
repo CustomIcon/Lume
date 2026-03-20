@@ -80,8 +80,6 @@ struct LumeApp: App {
     }
 }
 
-// MARK: - Notification Names
-
 extension Notification.Name {
     static let navigateToSearch = Notification.Name("navigateToSearch")
     static let navigateToHome = Notification.Name("navigateToHome")

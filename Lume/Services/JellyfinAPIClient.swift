@@ -51,8 +51,6 @@ actor JellyfinAPIClient {
         self.deviceName = Host.current().localizedName ?? "Mac"
     }
 
-    // MARK: - Configuration
-
     func configure(baseURL: String, accessToken: String? = nil, userId: String? = nil, deviceId: String? = nil) {
         self.baseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.accessToken = accessToken
@@ -86,8 +84,6 @@ actor JellyfinAPIClient {
         accessToken
     }
 
-    // MARK: - Authorization Header
-
     var authorizationHeader: String {
         var safeName = deviceName.replacingOccurrences(of: "\"", with: " ")
         safeName = safeName.unicodeScalars.filter { $0.isASCII }.map { String($0) }.joined()
@@ -100,8 +96,6 @@ actor JellyfinAPIClient {
         }
         return header
     }
-
-    // MARK: - Request Building
 
     private func buildURL(path: String, queryItems: [URLQueryItem]? = nil) throws -> URL {
         guard var components = URLComponents(string: "\(baseURL)\(path)") else {
@@ -152,8 +146,6 @@ actor JellyfinAPIClient {
         
         return request
     }
-
-    // MARK: - Request Execution
 
     private func execute<T: Decodable>(_ request: URLRequest) async throws -> T {
         let data: Data
@@ -216,14 +208,10 @@ actor JellyfinAPIClient {
         }
     }
 
-    // MARK: - Server Info
-
     func getPublicServerInfo() async throws -> PublicServerInfo {
         let request = try buildRequest(path: "/System/Info/Public")
         return try await execute(request)
     }
-
-    // MARK: - Authentication
 
     func authenticateByName(username: String, password: String) async throws -> AuthenticationResult {
         let body = AuthenticationRequest(username: username, pw: password)
@@ -237,8 +225,6 @@ actor JellyfinAPIClient {
 
         return result
     }
-
-    // MARK: - Quick Connect
 
     func initiateQuickConnect() async throws -> QuickConnectResult {
         let request = try buildRequest(method: "POST", path: "/QuickConnect/Initiate")
@@ -264,15 +250,11 @@ actor JellyfinAPIClient {
         return result
     }
 
-    // MARK: - Libraries / Views
-
     func getUserViews() async throws -> BaseItemDtoQueryResult {
         guard let userId else { throw APIError.unauthorized }
         let request = try buildRequest(path: "/Users/\(userId)/Views")
         return try await execute(request)
     }
-
-    // MARK: - Items
 
     func getItems(
         parentId: String? = nil,
@@ -345,8 +327,6 @@ actor JellyfinAPIClient {
         return try await execute(request)
     }
 
-    // MARK: - Seasons & Episodes
-
     func getSeasons(seriesId: String) async throws -> BaseItemDtoQueryResult {
         guard let userId else { throw APIError.unauthorized }
         let queryItems = [
@@ -382,8 +362,6 @@ actor JellyfinAPIClient {
         return try await execute(request)
     }
 
-    // MARK: - Resume Items (Continue Watching)
-
     func getResumeItems(parentId: String? = nil, limit: Int = 12, mediaTypes: [String]? = nil) async throws -> BaseItemDtoQueryResult {
         guard let userId else { throw APIError.unauthorized }
         var queryItems = [
@@ -400,8 +378,6 @@ actor JellyfinAPIClient {
         return try await execute(request)
     }
 
-    // MARK: - Latest Items
-
     func getLatestItems(parentId: String? = nil, limit: Int = 16) async throws -> [BaseItemDto] {
         guard let userId else { throw APIError.unauthorized }
         var queryItems = [
@@ -416,8 +392,6 @@ actor JellyfinAPIClient {
         let request = try buildRequest(path: "/Users/\(userId)/Items/Latest", queryItems: queryItems)
         return try await execute(request)
     }
-
-    // MARK: - Music
 
     func getArtists(parentId: String? = nil, limit: Int? = nil, startIndex: Int? = nil, sortBy: [String]? = nil, sortOrder: String? = nil) async throws -> BaseItemDtoQueryResult {
         guard let userId else { throw APIError.unauthorized }
@@ -467,35 +441,58 @@ actor JellyfinAPIClient {
         return try await execute(request)
     }
 
-    // MARK: - Live TV
-
-    func getLiveTvChannels(limit: Int? = nil, startIndex: Int? = nil) async throws -> BaseItemDtoQueryResult {
+    func getLiveTvChannels(limit: Int? = nil, startIndex: Int? = nil, searchTerm: String? = nil) async throws -> BaseItemDtoQueryResult {
         guard let userId else { throw APIError.unauthorized }
+        
         var queryItems = [
             URLQueryItem(name: "UserId", value: userId),
-            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio"),
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Overview"),
             URLQueryItem(name: "SortBy", value: "SortName"),
             URLQueryItem(name: "SortOrder", value: "Ascending"),
-            URLQueryItem(name: "AddCurrentProgram", value: "true")
+            URLQueryItem(name: "EnableTotalRecordCount", value: "true"),
+            URLQueryItem(name: "EnableFavoriteSorting", value: "true")
         ]
         if let limit { queryItems.append(URLQueryItem(name: "Limit", value: String(limit))) }
         if let startIndex { queryItems.append(URLQueryItem(name: "StartIndex", value: String(startIndex))) }
+        if let searchTerm, !searchTerm.isEmpty { queryItems.append(URLQueryItem(name: "searchTerm", value: searchTerm)) }
+        
+        // Use the official endpoint without dual API keys.
         let request = try buildRequest(path: "/LiveTv/Channels", queryItems: queryItems)
         return try await execute(request)
     }
 
-    func getLiveTvRecordings(limit: Int? = nil) async throws -> BaseItemDtoQueryResult {
+    func getLiveTvPrograms(channelIds: [String]? = nil, limit: Int? = nil) async throws -> BaseItemDtoQueryResult {
         guard let userId else { throw APIError.unauthorized }
         var queryItems = [
             URLQueryItem(name: "UserId", value: userId),
-            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Overview")
+            URLQueryItem(name: "HasAired", value: "false"),
+            URLQueryItem(name: "IsAiring", value: "true"),
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Overview"),
+            URLQueryItem(name: "EnableTotalRecordCount", value: "false")
         ]
+        if let channelIds, !channelIds.isEmpty {
+            queryItems.append(URLQueryItem(name: "ChannelIds", value: channelIds.joined(separator: ",")))
+        }
         if let limit { queryItems.append(URLQueryItem(name: "Limit", value: String(limit))) }
-        let request = try buildRequest(path: "/LiveTv/Recordings", queryItems: queryItems)
+        let request = try buildRequest(path: "/LiveTv/Programs", queryItems: queryItems)
         return try await execute(request)
     }
 
-    // MARK: - Playback
+    func getLiveTvRecordings(limit: Int? = nil, startIndex: Int? = nil, searchTerm: String? = nil) async throws -> BaseItemDtoQueryResult {
+        guard let userId else { throw APIError.unauthorized }
+        
+        var queryItems = [
+            URLQueryItem(name: "UserId", value: userId),
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Overview"),
+            URLQueryItem(name: "EnableTotalRecordCount", value: "true")
+        ]
+        if let limit { queryItems.append(URLQueryItem(name: "Limit", value: String(limit))) }
+        if let startIndex { queryItems.append(URLQueryItem(name: "StartIndex", value: String(startIndex))) }
+        if let searchTerm, !searchTerm.isEmpty { queryItems.append(URLQueryItem(name: "searchTerm", value: searchTerm)) }
+        
+        let request = try buildRequest(path: "/LiveTv/Recordings", queryItems: queryItems)
+        return try await execute(request)
+    }
 
     func reportPlaybackStart(_ info: PlaybackStartInfo) async throws {
         let request = try buildRequest(method: "POST", path: "/Sessions/Playing", body: info)
@@ -512,8 +509,6 @@ actor JellyfinAPIClient {
         try await executeVoid(request)
     }
 
-    // MARK: - Favorites
-
     func addFavorite(itemId: String) async throws -> UserItemDataDto {
         guard let userId else { throw APIError.unauthorized }
         let request = try buildRequest(method: "POST", path: "/Users/\(userId)/FavoriteItems/\(itemId)")
@@ -526,8 +521,6 @@ actor JellyfinAPIClient {
         return try await execute(request)
     }
 
-    // MARK: - Played Status
-
     func markPlayed(itemId: String) async throws -> UserItemDataDto {
         guard let userId else { throw APIError.unauthorized }
         let request = try buildRequest(method: "POST", path: "/Users/\(userId)/PlayedItems/\(itemId)")
@@ -539,8 +532,6 @@ actor JellyfinAPIClient {
         let request = try buildRequest(method: "DELETE", path: "/Users/\(userId)/PlayedItems/\(itemId)")
         return try await execute(request)
     }
-
-    // MARK: - Image URLs
 
     func imageURL(itemId: String, imageType: String = "Primary", maxWidth: Int? = nil, maxHeight: Int? = nil, tag: String? = nil) -> URL? {
         var path = "\(baseURL)/Items/\(itemId)/Images/\(imageType)"
@@ -564,8 +555,6 @@ actor JellyfinAPIClient {
         }
         return URL(string: path)
     }
-
-    // MARK: - Playback URL
 
     func streamURL(itemId: String, mediaSourceId: String? = nil, audioStreamIndex: Int? = nil, subtitleStreamIndex: Int? = nil, maxBitrate: Int = 140_000_000) -> URL? {
         guard let userId = self.userId else { return nil }
@@ -657,7 +646,25 @@ actor JellyfinAPIClient {
         return URL(string: path)
     }
 
-    // MARK: - Search
+    func downloadURL(itemId: String) -> URL? {
+        var path = "\(baseURL)/Items/\(itemId)/Download"
+        if let token = accessToken {
+            path += "?api_key=\(token)"
+        }
+        return URL(string: path)
+    }
+
+    /// Downloads the raw file data for a book (PDF, EPUB, etc.) from the server.
+    func downloadBookData(itemId: String) async throws -> Data {
+        let request = try buildRequest(path: "/Items/\(itemId)/Download")
+        let (data, response) = try await session.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            throw APIError.httpError(statusCode: statusCode, message: "Failed to download book")
+        }
+        return data
+    }
 
     func searchItems(query: String, limit: Int = 24, includeItemTypes: [String]? = nil) async throws -> BaseItemDtoQueryResult {
         guard let userId else { throw APIError.unauthorized }

@@ -4,6 +4,7 @@ struct HomeView: View {
     @Environment(SessionManager.self) private var session
     @State private var continueWatching: [BaseItemDto] = []
     @State private var nextUp: [BaseItemDto] = []
+
     @State private var latestByLibrary: [(library: BaseItemDto, items: [BaseItemDto])] = []
     @State private var isLoading = true
 
@@ -51,6 +52,8 @@ struct HomeView: View {
                             .padding(.horizontal)
                         }
                     }
+
+
 
                     // Recently Added per library
                     ForEach(latestByLibrary, id: \.library.id) { entry in
@@ -115,6 +118,8 @@ struct HomeView: View {
         } catch {
             nextUp = []
         }
+
+
 
         var latestResults: [(library: BaseItemDto, items: [BaseItemDto])] = []
         for library in session.libraries {

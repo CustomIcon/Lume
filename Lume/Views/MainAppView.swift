@@ -50,10 +50,14 @@ struct MainAppView: View {
                 )
                 .ignoresSafeArea()
             )
-            .padding(.bottom, (MusicPlayerManager.shared.currentSong != nil && session.activeVideoItem == nil) ? 64 : 0)
+            .padding(.bottom, (MusicPlayerManager.shared.currentSong != nil && session.activeVideoItem == nil && session.activeBookItem == nil) ? 64 : 0)
             
             if let activeVideo = session.activeVideoItem {
                 PlayerView(item: activeVideo)
+                    .ignoresSafeArea()
+                    .zIndex(100)
+            } else if let activeBook = session.activeBookItem {
+                BookReaderView(item: activeBook)
                     .ignoresSafeArea()
                     .zIndex(100)
             } else {
@@ -61,7 +65,7 @@ struct MainAppView: View {
             }
         }
         .themeContainer()
-        .toolbar(session.activeVideoItem != nil ? .hidden : .visible)
+        .toolbar((session.activeVideoItem != nil || session.activeBookItem != nil) ? .hidden : .visible)
         .toolbar {
             ToolbarItem(placement: .navigation) {
                 Button {
@@ -76,8 +80,6 @@ struct MainAppView: View {
             MusicPlayerManager.shared.setup(session: session)
         }
     }
-
-    // MARK: - Sidebar
 
     private var sidebar: some View {
         List(selection: $selectedSidebarItem) {
@@ -119,8 +121,6 @@ struct MainAppView: View {
         .navigationTitle("Lume")
     }
 
-    // MARK: - Detail Content
-
     @ViewBuilder
     private var detailContent: some View {
         switch selectedSidebarItem {
@@ -145,24 +145,26 @@ struct MainAppView: View {
             TVShowsLibraryView(library: library)
         case "music":
             MusicLibraryView(library: library)
+        case "livetv":
+            LiveTVLibraryView(library: library)
+        case "books":
+            BooksLibraryView(library: library)
         default:
             GenericLibraryView(library: library)
         }
     }
-
-    // MARK: - Icons
 
     private func iconForCollectionType(_ type: String?) -> String {
         switch type {
             case "movies": return "film"
             case "tvshows": return "tv"
             case "music": return "music.note"
+            case "livetv", "liverecordings", "LiveTv", "channels": return "antenna.radiowaves.left.and.right"
+            case "books": return "book"
             default: return "folder"
         }
     }
 }
-
-// MARK: - Theme Container
 
 struct ThemeContainerModifier: ViewModifier {
     @State private var theme = ThemeManager.shared

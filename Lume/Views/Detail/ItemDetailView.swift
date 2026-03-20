@@ -165,8 +165,6 @@ struct ItemDetailView: View {
         .task { await loadDetails() }
     }
 
-    // MARK: - Metadata Row
-
     private var metadataRow: some View {
         HStack(spacing: 12) {
             if let year = displayItem.yearText {
@@ -203,14 +201,16 @@ struct ItemDetailView: View {
         .foregroundStyle(.secondary)
     }
 
-    // MARK: - Action Buttons
-
     private var actionButtons: some View {
         HStack(spacing: 12) {
             Button {
-                session.activeVideoItem = displayItem
+                if displayItem.type == "Book" {
+                    session.activeBookItem = displayItem
+                } else {
+                    session.activeVideoItem = displayItem
+                }
             } label: {
-                Label("Play", systemImage: "play.fill")
+                Label(displayItem.type == "Book" ? "Read" : "Play", systemImage: displayItem.type == "Book" ? "book.fill" : "play.fill")
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
@@ -234,8 +234,6 @@ struct ItemDetailView: View {
             .controlSize(.large)
         }
     }
-
-    // MARK: - Data Loading
 
     private func loadDetails() async {
         guard let itemId = item.id else { return }
@@ -285,8 +283,6 @@ struct ItemDetailView: View {
     }
 }
 
-// MARK: - Person Card
-
 struct PersonCard: View {
     let person: BaseItemPerson
     let apiClient: JellyfinAPIClient
@@ -319,8 +315,6 @@ struct PersonCard: View {
         }
     }
 }
-
-// MARK: - Media Source Info Row
 
 struct MediaSourceInfoRow: View {
     let source: MediaSourceInfo

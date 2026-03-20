@@ -1,8 +1,6 @@
 import SwiftUI
 import SwiftData
 
-// MARK: - Settings Navigation
-
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general = "General"
     case appearance = "Appearance"
@@ -22,8 +20,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         }
     }
 }
-
-// MARK: - Main Settings View
 
 struct SettingsView: View {
     @State private var selectedSection: SettingsSection = .general
@@ -60,8 +56,6 @@ struct SettingsView: View {
         }
     }
 }
-
-// MARK: - General Settings
 
 struct GeneralSettingsView: View {
     @AppStorage("gridColumns") private var gridColumns = 5
@@ -113,8 +107,6 @@ struct GeneralSettingsView: View {
         .navigationTitle("General")
     }
 }
-
-// MARK: - Appearance Settings
 
 struct AppearanceSettingsView: View {
     @State private var themeManager = ThemeManager.shared
@@ -300,8 +292,6 @@ struct AppearanceSettingsView: View {
     }
 }
 
-// MARK: - Playback Settings
-
 struct PlaybackSettingsView: View {
     @AppStorage("preferDirectPlay") private var preferDirectPlay = true
     @AppStorage("preferredSubLanguage") private var preferredSubLanguage = "eng"
@@ -386,8 +376,6 @@ struct PlaybackSettingsView: View {
         .navigationTitle("Playback")
     }
 }
-
-// MARK: - Server Settings
 
 struct ServerSettingsView: View {
     @Environment(SessionManager.self) private var session
@@ -543,8 +531,6 @@ struct ServerSettingsView: View {
     }
 }
 
-// MARK: - About Settings
-
 struct AboutSettingsView: View {
     @State private var logger = LumeLogger.shared
 
@@ -642,8 +628,6 @@ struct AboutSettingsView: View {
         }
     }
 }
-
-// MARK: - Shared Components
 
 private func settingsHeader(_ title: String, subtitle: String) -> some View {
     VStack(alignment: .leading, spacing: 4) {

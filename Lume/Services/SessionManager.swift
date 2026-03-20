@@ -4,7 +4,6 @@ import SwiftUI
 
 @Observable
 final class SessionManager {
-    // MARK: - State
 
     enum AuthState: Equatable {
         case unknown
@@ -17,9 +16,11 @@ final class SessionManager {
     private(set) var currentServer: ServerConfiguration?
     private(set) var currentSession: UserSession?
     private(set) var libraries: [BaseItemDto] = []
+    private(set) var isLiveTvEnabled = false
     private(set) var isLoading = false
     private(set) var error: String?
     var activeVideoItem: BaseItemDto?
+    var activeBookItem: BaseItemDto?
 
     let apiClient: JellyfinAPIClient
 
@@ -28,8 +29,6 @@ final class SessionManager {
     init() {
         self.apiClient = JellyfinAPIClient()
     }
-
-    // MARK: - Setup
 
     func setup(modelContext: ModelContext) async {
         self.modelContext = modelContext
@@ -83,8 +82,6 @@ final class SessionManager {
         }
     }
 
-    // MARK: - Server Configuration
-
     func validateAndSaveServer(url: String) async throws -> PublicServerInfo {
         isLoading = true
         error = nil
@@ -120,8 +117,6 @@ final class SessionManager {
 
         return info
     }
-
-    // MARK: - Authentication
 
     func login(username: String, password: String) async throws {
         isLoading = true
@@ -250,12 +245,10 @@ final class SessionManager {
         await loadLibraries()
     }
 
-    // MARK: - Libraries
-
     func loadLibraries() async {
         do {
             let result = try await apiClient.getUserViews()
-            let allowedTypes = ["movies", "tvshows", "music"]
+            let allowedTypes = ["movies", "tvshows", "music", "livetv", "books"]
             libraries = (result.items ?? []).filter { allowedTypes.contains($0.collectionType ?? "") }
 
             // Cache libraries
@@ -280,7 +273,20 @@ final class SessionManager {
                 }
                 try modelContext.save()
             }
-            LumeInfo("Loaded \(libraries.count) libraries (Movies/TV/Music)")
+            LumeInfo("Loaded \(libraries.count) libraries (Movies/TV/Music/Books)")
+            
+            // Check if Live TV is available and has channels
+            do {
+                let liveResult = try await apiClient.getLiveTvChannels(limit: 1)
+                let count = liveResult.totalRecordCount ?? liveResult.items?.count ?? 0
+                if count > 0 && !libraries.contains(where: { $0.collectionType == "livetv" }) {
+                    let liveTvLib = BaseItemDto(name: "Live TV", id: "livetv-virtual", collectionType: "livetv")
+                    libraries.append(liveTvLib)
+                    LumeInfo("Live TV is available, added to libraries.")
+                }
+            } catch {
+                LumeInfo("Live TV not available or access denied: \(error.localizedDescription)")
+            }
         } catch {
             self.error = error.localizedDescription
             LumeError("Failed to load libraries: \(error.localizedDescription)")
@@ -290,8 +296,6 @@ final class SessionManager {
     func refreshLibraries() async {
         await loadLibraries()
     }
-
-    // MARK: - Logout
 
     func logout() async {
         LumeInfo("Logging out of current session.")
@@ -317,8 +321,6 @@ final class SessionManager {
         currentServer = nil
         authState = .needsServer
     }
-
-    // MARK: - Favorites
 
     func toggleFavorite(itemId: String, isFavorite: Bool) async throws -> UserItemDataDto {
         if isFavorite {

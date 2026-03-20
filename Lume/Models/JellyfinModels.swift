@@ -1,17 +1,15 @@
 import Foundation
 
-// MARK: - Indirect Wrapper (to break recursive value types)
-
 final class IndirectItem: Codable, Hashable {
-    let value: BaseItemDto
+    let value: BaseItemDto?
 
-    init(_ value: BaseItemDto) {
+    init(_ value: BaseItemDto?) {
         self.value = value
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.singleValueContainer()
-        self.value = try container.decode(BaseItemDto.self)
+        self.value = try? container.decode(BaseItemDto.self)
     }
 
     func encode(to encoder: Encoder) throws {
@@ -28,8 +26,6 @@ final class IndirectItem: Codable, Hashable {
     }
 }
 
-// MARK: - Server Info
-
 struct PublicServerInfo: Codable {
     let localAddress: String?
     let serverName: String?
@@ -45,8 +41,6 @@ struct PublicServerInfo: Codable {
         case startupWizardCompleted = "StartupWizardCompleted"
     }
 }
-
-// MARK: - Authentication
 
 struct AuthenticationRequest: Codable {
     let username: String
@@ -86,8 +80,6 @@ struct UserDto: Codable, Identifiable {
     }
 }
 
-// MARK: - Quick Connect
-
 struct QuickConnectResult: Codable {
     let secret: String?
     let code: String?
@@ -111,8 +103,6 @@ struct QuickConnectState: Codable {
         case secret = "Secret"
     }
 }
-
-// MARK: - Library / Views
 
 struct BaseItemDtoQueryResult: Codable {
     let items: [BaseItemDto]?
@@ -235,6 +225,59 @@ struct BaseItemDto: Codable, Identifiable, Hashable {
         case primaryImageAspectRatio = "PrimaryImageAspectRatio"
     }
 
+    init(name: String? = nil, id: String? = nil, collectionType: String? = nil, type: String? = nil) {
+        self.name = name
+        self.id = id
+        self.collectionType = collectionType
+        self.type = type
+        self.serverId = nil
+        self.etag = nil
+        self.dateCreated = nil
+        self.overview = nil
+        self.productionYear = nil
+        self.indexNumber = nil
+        self.parentIndexNumber = nil
+        self.communityRating = nil
+        self.officialRating = nil
+        self.runTimeTicks = nil
+        self.genres = nil
+        self.tags = nil
+        self.studios = nil
+        self.people = nil
+        self.parentId = nil
+        self.seriesName = nil
+        self.seriesId = nil
+        self.seasonId = nil
+        self.seasonName = nil
+        self.imageTags = nil
+        self.backdropImageTags = nil
+        self.parentBackdropImageTags = nil
+        self.parentBackdropItemId = nil
+        self.userData = nil
+        self.mediaSources = nil
+        self.mediaStreams = nil
+        self.premiereDate = nil
+        self.criticRating = nil
+        self.albumArtist = nil
+        self.album = nil
+        self.artists = nil
+        self.artistItems = nil
+        self.albumId = nil
+        self.childCount = nil
+        self.recursiveItemCount = nil
+        self.status = nil
+        self.airDays = nil
+        self.endDate = nil
+        self.locationType = nil
+        self.channelNumber = nil
+        self._currentProgram = nil
+        self.videoType = nil
+        self.hasSubtitles = nil
+        self.container = nil
+        self.sortName = nil
+        self.primaryImageAspectRatio = nil
+    }
+
     static func == (lhs: BaseItemDto, rhs: BaseItemDto) -> Bool {
         lhs.id == rhs.id
     }
@@ -298,8 +341,6 @@ struct BaseItemPerson: Codable, Identifiable, Hashable {
     }
 }
 
-// MARK: - User Data
-
 struct UserItemDataDto: Codable, Hashable {
     let rating: Double?
     let playedPercentage: Double?
@@ -323,8 +364,6 @@ struct UserItemDataDto: Codable, Hashable {
         case lastPlayedDate = "LastPlayedDate"
     }
 }
-
-// MARK: - Media Info
 
 struct MediaSourceInfo: Codable, Identifiable, Hashable {
     let id: String?
@@ -398,8 +437,6 @@ struct MediaStream: Codable, Identifiable, Hashable {
     }
 }
 
-// MARK: - Playback Reporting
-
 struct PlaybackStartInfo: Codable {
     let itemId: String
     var mediaSourceId: String? = nil
@@ -455,8 +492,6 @@ struct PlaybackStopInfo: Codable {
         case playSessionId = "PlaySessionId"
     }
 }
-
-// MARK: - Live TV
 
 struct LiveTvChannelResult: Codable {
     let items: [BaseItemDto]?

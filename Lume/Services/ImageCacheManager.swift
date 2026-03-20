@@ -5,6 +5,8 @@ enum CacheSection: String, CaseIterable, Identifiable {
     case movies = "Movies"
     case tvShows = "TV Shows"
     case music = "Music"
+    case liveTv = "Live TV"
+    case books = "Books"
     case others = "Others"
     
     var id: String { rawValue }
@@ -18,6 +20,10 @@ enum CacheSection: String, CaseIterable, Identifiable {
             return .tvShows
         case "MusicAlbum", "Audio", "MusicArtist":
             return .music
+        case "Channel", "LiveTvProgram", "LiveTvRecording":
+            return .liveTv
+        case "Book":
+            return .books
         default:
             return .others
         }

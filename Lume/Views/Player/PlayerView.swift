@@ -41,15 +41,11 @@ extension View {
     }
 }
 
-// MARK: - VLC Track Info (from VLCMediaPlayer at runtime)
-
 struct VLCTrackInfo: Identifiable, Hashable {
     let index: Int32
     let name: String
     var id: Int32 { index }
 }
-
-// MARK: - VLC SwiftUI Wrapper
 
 struct VLCVideoPlayer: NSViewRepresentable {
     let url: URL
@@ -134,8 +130,6 @@ struct VLCVideoPlayer: NSViewRepresentable {
             mediaPlayer?.time = VLCTime(int: Int32(seconds.components.seconds * 1000))
         }
 
-        // MARK: - Native VLC subtitle track control
-
         /// Returns the available SPU (subtitle) tracks from VLC.
         /// Index -1 means "Disable subtitles".
         var subtitleTracks: [VLCTrackInfo] {
@@ -202,8 +196,6 @@ struct VLCVideoPlayer: NSViewRepresentable {
     }
 }
 
-// MARK: - Player ViewModel
-
 @Observable
 final class PlayerViewModel {
     var player: AVPlayer?
@@ -263,8 +255,6 @@ final class PlayerViewModel {
         cleanup()
     }
 }
-
-// MARK: - Player View
 
 struct PlayerView: View {
     @Environment(SessionManager.self) private var session
@@ -406,8 +396,6 @@ struct PlayerView: View {
         }
     }
 
-    // MARK: - Playback Preparation
-
     private func prepareAndPlay() async {
         guard let itemId = item.id else {
             errorMessage = "Invalid item — no ID"
@@ -457,10 +445,15 @@ struct PlayerView: View {
                 }
                 if source.supportsDirectPlay == true {
                     let sourceId = source.id ?? mediaSourceId ?? itemId
-                    var directPlayURL = "\(base)/Videos/\(itemId)/stream?static=true&MediaSourceId=\(sourceId)"
-                    if let token { directPlayURL += "&api_key=\(token)" }
-                    print("[Lume] Using direct play: \(directPlayURL)")
-                    vm.playURL = URL(string: directPlayURL)
+                    if item.type == "Channel" || item.type == "TvChannel" {
+                        vm.playURL = session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId)
+                        print("[Lume] Using HLS Live channel stream: \(vm.playURL?.absoluteString ?? "")")
+                    } else {
+                        var directPlayURL = "\(base)/Videos/\(itemId)/stream?static=true&MediaSourceId=\(sourceId)"
+                        if let token { directPlayURL += "&api_key=\(token)" }
+                        print("[Lume] Using direct play: \(directPlayURL)")
+                        vm.playURL = URL(string: directPlayURL)
+                    }
                     vm.playSessionId = info.playSessionId ?? UUID().uuidString
                     return
                 }
@@ -471,13 +464,16 @@ struct PlayerView: View {
 
         vm.statusMessage = "Using fallback stream..."
         let sourceId = mediaSourceId ?? itemId
-        var fallbackURL = "\(base)/Videos/\(itemId)/stream?static=true&MediaSourceId=\(sourceId)"
-        if let token { fallbackURL += "&api_key=\(token)" }
-        print("[Lume] Using fallback: \(fallbackURL)")
-        vm.playURL = URL(string: fallbackURL)
+        if item.type == "Channel" || item.type == "TvChannel" {
+            vm.playURL = session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId)
+            print("[Lume] Using HLS fallback for channel: \(vm.playURL?.absoluteString ?? "")")
+        } else {
+            var fallbackURL = "\(base)/Videos/\(itemId)/stream?static=true&MediaSourceId=\(sourceId)"
+            if let token { fallbackURL += "&api_key=\(token)" }
+            print("[Lume] Using fallback: \(fallbackURL)")
+            vm.playURL = URL(string: fallbackURL)
+        }
     }
-
-    // MARK: - Controls
 
     private func triggerControls() {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
@@ -497,8 +493,6 @@ struct PlayerView: View {
             }
         }
     }
-
-    // MARK: - Top Bar
 
     private var topLiquidBar: some View {
         HStack(spacing: 20) {
@@ -521,6 +515,10 @@ struct PlayerView: View {
                     Text(String(year))
                         .font(.system(size: 14, weight: .medium, design: .rounded))
                         .foregroundStyle(.white.opacity(0.7))
+                } else if item.type == "Channel" || item.type == "TvChannel" {
+                    Text("Live")
+                        .font(.system(size: 14, weight: .bold, design: .rounded))
+                        .foregroundStyle(.red)
                 }
             }
             Spacer()
@@ -539,23 +537,34 @@ struct PlayerView: View {
         )
     }
 
-    // MARK: - Bottom HUD
-
     private var bottomLiquidHUD: some View {
         VStack(spacing: 30) {
             VStack(spacing: 12) {
-                HStack {
-                    Text(formatTime(vm.currentPlaybackTime))
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.9))
-                    Spacer()
-                    Text(formatTime(vm.duration))
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundStyle(.white.opacity(0.9))
-                }
-                .padding(.horizontal, 4)
+                if item.type != "Channel" && item.type != "TvChannel" {
+                    HStack {
+                        Text(formatTime(vm.currentPlaybackTime))
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.9))
+                        Spacer()
+                        Text(formatTime(vm.duration))
+                            .font(.system(size: 13, design: .monospaced))
+                            .foregroundStyle(.white.opacity(0.9))
+                    }
+                    .padding(.horizontal, 4)
 
-                ModernScrubber(vm: vm)
+                    ModernScrubber(vm: vm)
+                } else {
+                    HStack {
+                        Circle()
+                            .fill(.red)
+                            .frame(width: 8, height: 8)
+                        Text("LIVE")
+                            .font(.system(size: 13, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
+                        Spacer()
+                    }
+                    .padding(.horizontal, 4)
+                }
             }
             .padding(.horizontal, 30)
 
@@ -591,8 +600,6 @@ struct PlayerView: View {
                 .ignoresSafeArea()
         )
     }
-
-    // MARK: - Menus
 
     private func liquidMenu<Content: View>(label: String, icon: String, @ViewBuilder menu: () -> Content) -> some View {
         Menu { menu() } label: {
@@ -676,8 +683,6 @@ struct PlayerView: View {
         UserDefaults.standard.set(size, forKey: "subtitleScale")
     }
 
-    // MARK: - Helpers
-
     private func formatTime(_ seconds: Double) -> String {
         guard !seconds.isNaN else { return "0:00" }
         let h = Int(seconds) / 3600
@@ -735,8 +740,6 @@ struct PlayerView: View {
         }
     }
 }
-
-// MARK: - Modern Scrubber
 
 struct ModernScrubber: View {
     @Bindable var vm: PlayerViewModel

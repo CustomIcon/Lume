@@ -60,6 +60,10 @@ Lume is built with modern Apple technologies:
 3.  Ensure the **VLCKit** Swift Package is resolved.
 4.  Build and Run (`Cmd + R`).
 
+## 📄 AI / LLM usage DISCLAIMER
+
+This project is partially developed with the help of AI. Such as Documenting functions, VLCKit implemetation and This very README.md file was also generated with the help of AI. other than that, all the code was written by either me or a contributor.
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.

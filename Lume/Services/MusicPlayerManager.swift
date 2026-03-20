@@ -196,8 +196,6 @@ final class MusicPlayerManager {
         progress = seconds
     }
     
-    // MARK: - Remote Commands
-    
     private func setupRemoteCommandCenter() {
         let center = MPRemoteCommandCenter.shared()
         

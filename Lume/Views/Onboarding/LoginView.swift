@@ -101,8 +101,6 @@ struct LoginView: View {
         }
     }
 
-    // MARK: - Credentials Form
-
     private var credentialsForm: some View {
         VStack(spacing: 16) {
             VStack(alignment: .leading, spacing: 8) {
@@ -137,8 +135,6 @@ struct LoginView: View {
             .disabled(username.isEmpty || isLoading)
         }
     }
-
-    // MARK: - Quick Connect
 
     private var quickConnectView: some View {
         VStack(spacing: 16) {
@@ -184,8 +180,6 @@ struct LoginView: View {
             }
         }
     }
-
-    // MARK: - Actions
 
     private func loginWithCredentials() {
         guard !username.isEmpty else { return }

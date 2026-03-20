@@ -76,8 +76,6 @@ struct RemoteImageView: View {
     }
 }
 
-// MARK: - Item Poster Card
-
 struct ItemPosterCard: View {
     let item: BaseItemDto
     let apiClient: JellyfinAPIClient
@@ -148,8 +146,6 @@ struct ItemPosterCard: View {
         }
     }
 }
-
-// MARK: - Item Backdrop Card
 
 struct ItemBackdropCard: View {
     let item: BaseItemDto
