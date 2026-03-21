@@ -44,6 +44,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO
 
 
+
       - name: Code Sign with Developer Identity
         run: |
           APP="./build/Lume.xcarchive/Products/Applications/Lume.app"

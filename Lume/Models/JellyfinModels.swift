@@ -157,7 +157,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
     let seriesId: String?
     let seasonId: String?
     let seasonName: String?
-    let imageTags: [String: String]?
+    var imageTags: [String: String]?
     let backdropImageTags: [String]?
     let parentBackdropImageTags: [String]?
     let parentBackdropItemId: String?
@@ -242,7 +242,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
         case primaryImageAspectRatio = "PrimaryImageAspectRatio"
     }
 
-    init(name: String? = nil, id: String? = nil, collectionType: String? = nil, type: String? = nil) {
+    init(name: String? = nil, id: String? = nil, collectionType: String? = nil, type: String? = nil, imageTags: [String: String]? = nil) {
         self.name = name
         self.id = id
         self.collectionType = collectionType
@@ -266,7 +266,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
         self.seriesId = nil
         self.seasonId = nil
         self.seasonName = nil
-        self.imageTags = nil
+        self.imageTags = imageTags
         self.backdropImageTags = nil
         self.parentBackdropImageTags = nil
         self.parentBackdropItemId = nil

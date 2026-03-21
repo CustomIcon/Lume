@@ -16,12 +16,6 @@ struct DownloadsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Text("Downloads")
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
-                    .padding(.horizontal)
-                    .padding(.top)
-
                 if downloads.isEmpty {
                     ContentUnavailableView(
                         "No Downloads",
@@ -34,7 +28,7 @@ struct DownloadsView: View {
                     // 1. Movies & Books & Music (Normal)
                     ForEach(libraries, id: \.name) { library in
                         if library.type == "Series" {
-                            let tvDownloads = downloads.filter { $0.type == "Episode" || $0.type == "Series" }
+                            let tvDownloads = downloads.filter { ($0.type == "Episode" || $0.type == "Series") && $0.seriesId != nil }
                             if !tvDownloads.isEmpty {
                                 TVSeriesSection(items: tvDownloads)
                             }
@@ -54,7 +48,10 @@ struct DownloadsView: View {
                     }
                 }
             }
+            .padding(.vertical)
         }
+        .navigationTitle("Downloads")
+        .toolbarBackground(.hidden)
     }
 }
 

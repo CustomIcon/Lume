@@ -13,6 +13,7 @@ final class SessionManager {
     }
 
     private(set) var authState: AuthState = .unknown
+    private(set) var isOffline: Bool = false
     private(set) var currentServer: ServerConfiguration?
     private(set) var currentSession: UserSession?
     private(set) var libraries: [BaseItemDto] = []
@@ -66,10 +67,37 @@ final class SessionManager {
                 // Validate the session is still active
                 do {
                     _ = try await apiClient.getUserViews()
+                    isOffline = false
                     authState = .authenticated
                     await loadLibraries()
-                } catch {
-                    // Token might be expired
+                } catch let error {
+                    if let apiError = error as? APIError {
+                        if case .serverUnreachable = apiError {
+                            LumeInfo("Server unreachable (APIError), entering offline mode.")
+                            isOffline = true
+                            authState = .authenticated
+                            await loadLibraries()
+                            return
+                        }
+                    }
+                    
+                    if let nsError = error as NSError?, nsError.domain == NSURLErrorDomain {
+                        let connectivityCodes = [
+                             NSURLErrorTimedOut, NSURLErrorCannotFindHost, 
+                             NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost, 
+                             NSURLErrorNotConnectedToInternet, NSURLErrorDNSLookupFailed
+                        ]
+                        if connectivityCodes.contains(nsError.code) {
+                            LumeInfo("Server unreachable (NSURLError), entering offline mode.")
+                            isOffline = true
+                            authState = .authenticated
+                            await loadLibraries()
+                            return
+                        }
+                    }
+                    
+                    // Token might be expired or other actual API error
+                    LumeError("Session validation failed: \(error.localizedDescription)")
                     authState = .needsAuthentication
                 }
             } else if let server = servers.first {
@@ -248,8 +276,14 @@ final class SessionManager {
     }
 
     func loadLibraries() async {
+        if isOffline {
+            await loadCachedLibraries()
+            return
+        }
+
         do {
             let result = try await apiClient.getUserViews()
+            isOffline = false
             let allowedTypes = ["movies", "tvshows", "music", "livetv", "books"]
             libraries = (result.items ?? []).filter { allowedTypes.contains($0.collectionType ?? "") }
 
@@ -296,7 +330,37 @@ final class SessionManager {
     }
 
     func refreshLibraries() async {
+        // Recheck connectivity when refreshing
+        do {
+            _ = try await apiClient.getUserViews()
+            isOffline = false
+        } catch {
+            isOffline = true
+        }
         await loadLibraries()
+    }
+
+    private func loadCachedLibraries() async {
+        guard let modelContext, let userId = currentSession?.userID else { return }
+        
+        do {
+            let descriptor = FetchDescriptor<CachedLibrary>(
+                predicate: #Predicate<CachedLibrary> { $0.userID == userId },
+                sortBy: [SortDescriptor(\.sortOrder)]
+            )
+            let cached = try modelContext.fetch(descriptor)
+            
+            self.libraries = cached.map { c in
+                var item = BaseItemDto(name: c.name, id: c.itemID, collectionType: c.collectionType)
+                if let tag = c.imageTag {
+                    item.imageTags = ["Primary": tag]
+                }
+                return item
+            }
+            LumeInfo("Loaded \(libraries.count) libraries from local cache.")
+        } catch {
+            LumeError("Failed to load cached libraries: \(error.localizedDescription)")
+        }
     }
 
     func logout() async {

@@ -10,7 +10,7 @@ enum SidebarItem: Hashable {
 
 struct MainAppView: View {
     @Environment(SessionManager.self) private var session
-    @State private var selectedSidebarItem: SidebarItem? = .home
+    @State private var selectedSidebarItem: SidebarItem?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var isRefreshing = false
 
@@ -107,6 +107,11 @@ struct MainAppView: View {
         }
         .task {
             MusicPlayerManager.shared.setup(session: session)
+            
+            // Default to downloads if offline, otherwise home
+            if selectedSidebarItem == nil {
+                selectedSidebarItem = session.isOffline ? .downloads : .home
+            }
         }
     }
 
@@ -117,18 +122,24 @@ struct MainAppView: View {
                     NavigationLink(value: SidebarItem.home) {
                         Label("Home", systemImage: "house")
                     }
+                    .disabled(session.isOffline)
+                    
                     NavigationLink(value: SidebarItem.search) {
                         Label("Search", systemImage: "magnifyingglass")
                     }
+                    .disabled(session.isOffline)
+                    
                     NavigationLink(value: SidebarItem.downloads) {
                         Label("Downloads", systemImage: "arrow.down.circle")
                     }
                 }
 
-                Section("Libraries") {
-                    ForEach(session.libraries) { library in
-                        NavigationLink(value: SidebarItem.library(library)) {
-                            Label(library.displayName, systemImage: iconForCollectionType(library.collectionType))
+                if !session.isOffline {
+                    Section("Libraries") {
+                        ForEach(session.libraries) { library in
+                            NavigationLink(value: SidebarItem.library(library)) {
+                                Label(library.displayName, systemImage: iconForCollectionType(library.collectionType))
+                            }
                         }
                     }
                 }
