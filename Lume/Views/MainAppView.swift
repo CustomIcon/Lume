@@ -3,6 +3,7 @@ import SwiftUI
 enum SidebarItem: Hashable {
     case home
     case search
+    case downloads
     case settings
     case library(BaseItemDto)
 }
@@ -10,10 +11,12 @@ enum SidebarItem: Hashable {
 struct MainAppView: View {
     @Environment(SessionManager.self) private var session
     @State private var selectedSidebarItem: SidebarItem? = .home
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @State private var isRefreshing = false
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            NavigationSplitView {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebar
             } detail: {
                 if selectedSidebarItem == .settings {
@@ -32,11 +35,18 @@ struct MainAppView: View {
                                     ItemDetailView(item: item)
                                 }
                             }
+                            .navigationDestination(for: String.self) { seriesId in
+                                SeriesDownloadsDetailView(seriesId: seriesId)
+                            }
                     }
                     .scrollContentBackground(.hidden)
                     .background(.ultraThinMaterial)
+                    .toolbarBackground(.hidden, for: .windowToolbar)
+                    .toolbarBackground(.hidden, for: .automatic)
                 }
             }
+            .toolbarBackground(.hidden, for: .windowToolbar)
+            .toolbarBackground(.hidden, for: .automatic)
             .background(
                 LinearGradient(
                     colors: [
@@ -50,7 +60,7 @@ struct MainAppView: View {
                 )
                 .ignoresSafeArea()
             )
-            .padding(.bottom, (MusicPlayerManager.shared.currentSong != nil && session.activeVideoItem == nil && session.activeBookItem == nil) ? 64 : 0)
+            .padding(.bottom, (session.activeVideoItem == nil && session.activeBookItem == nil) ? 0 : 0) // Fixed padding
             
             if let activeVideo = session.activeVideoItem {
                 PlayerView(item: activeVideo)
@@ -60,18 +70,37 @@ struct MainAppView: View {
                 BookReaderView(item: activeBook)
                     .ignoresSafeArea()
                     .zIndex(100)
-            } else {
-                MiniPlayerView()
             }
         }
         .themeContainer()
+        .onAppear {
+            // Apply titlebar transparency immediately
+            NSApp.windows.forEach { window in
+                window.titlebarAppearsTransparent = true
+                window.titleVisibility = .hidden
+            }
+            // Repeat after a short delay for good measure during initialization animations
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                NSApp.windows.forEach { window in
+                    window.titlebarAppearsTransparent = true
+                    window.titleVisibility = .hidden
+                }
+            }
+        }
         .toolbar((session.activeVideoItem != nil || session.activeBookItem != nil) ? .hidden : .visible)
         .toolbar {
-            ToolbarItem(placement: .navigation) {
+            ToolbarItem(placement: .primaryAction) {
                 Button {
-                    Task { await session.refreshLibraries() }
+                    Task {
+                        isRefreshing = true
+                        await session.refreshLibraries()
+                        try? await Task.sleep(for: .seconds(0.5))
+                        isRefreshing = false
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
+                        .rotationEffect(.degrees(isRefreshing ? 360 : 0))
+                        .animation(isRefreshing ? .linear(duration: 1).repeatForever(autoreverses: false) : .default, value: isRefreshing)
                 }
                 .help("Refresh Libraries")
             }
@@ -82,43 +111,61 @@ struct MainAppView: View {
     }
 
     private var sidebar: some View {
-        List(selection: $selectedSidebarItem) {
-            Section {
-                NavigationLink(value: SidebarItem.home) {
-                    Label("Home", systemImage: "house")
-                }
-                NavigationLink(value: SidebarItem.search) {
-                    Label("Search", systemImage: "magnifyingglass")
-                }
-            }
-
-            Section("Libraries") {
-                ForEach(session.libraries) { library in
-                    NavigationLink(value: SidebarItem.library(library)) {
-                        Label(library.displayName, systemImage: iconForCollectionType(library.collectionType))
+        VStack(spacing: 0) {
+            List(selection: $selectedSidebarItem) {
+                Section {
+                    NavigationLink(value: SidebarItem.home) {
+                        Label("Home", systemImage: "house")
+                    }
+                    NavigationLink(value: SidebarItem.search) {
+                        Label("Search", systemImage: "magnifyingglass")
+                    }
+                    NavigationLink(value: SidebarItem.downloads) {
+                        Label("Downloads", systemImage: "arrow.down.circle")
                     }
                 }
-            }
 
-            Section {
-                NavigationLink(value: SidebarItem.settings) {
-                    Label("Settings", systemImage: "gearshape")
+                Section("Libraries") {
+                    ForEach(session.libraries) { library in
+                        NavigationLink(value: SidebarItem.library(library)) {
+                            Label(library.displayName, systemImage: iconForCollectionType(library.collectionType))
+                        }
+                    }
                 }
-                
-                Button {
-                    Task { await session.logout() }
-                } label: {
-                    Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
-                        .foregroundStyle(.secondary)
+
+                Section {
+                    NavigationLink(value: SidebarItem.settings) {
+                        Label("Settings", systemImage: "gearshape")
+                    }
+                    
+                    Button {
+                        Task { await session.logout() }
+                    } label: {
+                        Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+            }
+            .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .background(.clear)
+            
+            // MiniPlayer at the bottom of the sidebar
+            if MusicPlayerManager.shared.currentSong != nil {
+                MiniPlayerView()
+                    .padding(12)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .listStyle(.sidebar)
-        .scrollContentBackground(.hidden)
         .background(.ultraThinMaterial)
-        .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 220)
+        .toolbarBackground(.hidden)
+        .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 300)
         .navigationTitle("Lume")
+    }
+
+    private func toggleSidebar() {
+        NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
     }
 
     @ViewBuilder
@@ -128,6 +175,8 @@ struct MainAppView: View {
             HomeView()
         case .search:
             SearchView()
+        case .downloads:
+            DownloadsView()
         case .settings:
             SettingsView()
         case .library(let library):

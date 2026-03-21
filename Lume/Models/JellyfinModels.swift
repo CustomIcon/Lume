@@ -1,6 +1,6 @@
-import Foundation
+@preconcurrency import Foundation
 
-final class IndirectItem: Codable, Hashable {
+final class IndirectItem: Codable, Hashable, Sendable {
     let value: BaseItemDto?
 
     init(_ value: BaseItemDto?) {
@@ -26,7 +26,7 @@ final class IndirectItem: Codable, Hashable {
     }
 }
 
-struct PublicServerInfo: Codable {
+struct PublicServerInfo: Sendable, Codable {
     let localAddress: String?
     let serverName: String?
     let version: String?
@@ -40,9 +40,26 @@ struct PublicServerInfo: Codable {
         case id = "Id"
         case startupWizardCompleted = "StartupWizardCompleted"
     }
+
+    init(localAddress: String?, serverName: String?, version: String?, id: String?, startupWizardCompleted: Bool?) {
+        self.localAddress = localAddress
+        self.serverName = serverName
+        self.version = version
+        self.id = id
+        self.startupWizardCompleted = startupWizardCompleted
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        localAddress = try container.decodeIfPresent(String.self, forKey: .localAddress)
+        serverName = try container.decodeIfPresent(String.self, forKey: .serverName)
+        version = try container.decodeIfPresent(String.self, forKey: .version)
+        id = try container.decodeIfPresent(String.self, forKey: .id)
+        startupWizardCompleted = try container.decodeIfPresent(Bool.self, forKey: .startupWizardCompleted)
+    }
 }
 
-struct AuthenticationRequest: Codable {
+struct AuthenticationRequest: Codable, Sendable {
     let username: String
     let pw: String
 
@@ -52,7 +69,7 @@ struct AuthenticationRequest: Codable {
     }
 }
 
-struct AuthenticationResult: Codable {
+struct AuthenticationResult: Codable, Sendable {
     let user: UserDto?
     let accessToken: String?
     let serverId: String?
@@ -64,7 +81,7 @@ struct AuthenticationResult: Codable {
     }
 }
 
-struct UserDto: Codable, Identifiable {
+struct UserDto: Codable, Identifiable, Sendable {
     let name: String?
     let serverId: String?
     let id: String?
@@ -80,7 +97,7 @@ struct UserDto: Codable, Identifiable {
     }
 }
 
-struct QuickConnectResult: Codable {
+struct QuickConnectResult: Codable, Sendable {
     let secret: String?
     let code: String?
     let authenticated: Bool?
@@ -94,7 +111,7 @@ struct QuickConnectResult: Codable {
     }
 }
 
-struct QuickConnectState: Codable {
+struct QuickConnectState: Codable, Sendable {
     let authenticated: Bool?
     let secret: String?
 
@@ -104,7 +121,7 @@ struct QuickConnectState: Codable {
     }
 }
 
-struct BaseItemDtoQueryResult: Codable {
+struct BaseItemDtoQueryResult: Codable, Sendable {
     let items: [BaseItemDto]?
     let totalRecordCount: Int?
     let startIndex: Int?
@@ -116,7 +133,7 @@ struct BaseItemDtoQueryResult: Codable {
     }
 }
 
-struct BaseItemDto: Codable, Identifiable, Hashable {
+struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
     let name: String?
     let serverId: String?
     let id: String?
@@ -315,7 +332,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable {
     }
 }
 
-struct NameIdPair: Codable, Identifiable, Hashable {
+struct NameIdPair: Codable, Identifiable, Hashable, Sendable {
     let name: String?
     let id: String?
 
@@ -325,7 +342,7 @@ struct NameIdPair: Codable, Identifiable, Hashable {
     }
 }
 
-struct BaseItemPerson: Codable, Identifiable, Hashable {
+struct BaseItemPerson: Codable, Identifiable, Hashable, Sendable {
     let name: String?
     let id: String?
     let role: String?
@@ -341,7 +358,7 @@ struct BaseItemPerson: Codable, Identifiable, Hashable {
     }
 }
 
-struct UserItemDataDto: Codable, Hashable {
+struct UserItemDataDto: Codable, Hashable, Sendable {
     let rating: Double?
     let playedPercentage: Double?
     let unplayedItemCount: Int?
@@ -365,7 +382,7 @@ struct UserItemDataDto: Codable, Hashable {
     }
 }
 
-struct MediaSourceInfo: Codable, Identifiable, Hashable {
+struct MediaSourceInfo: Codable, Identifiable, Hashable, Sendable {
     let id: String?
     let name: String?
     let path: String?
@@ -395,7 +412,7 @@ struct MediaSourceInfo: Codable, Identifiable, Hashable {
     }
 }
 
-struct MediaStream: Codable, Identifiable, Hashable {
+struct MediaStream: Codable, Identifiable, Hashable, Sendable {
     let index: Int?
     let type: String?
     let codec: String?
@@ -437,7 +454,7 @@ struct MediaStream: Codable, Identifiable, Hashable {
     }
 }
 
-struct PlaybackStartInfo: Codable {
+struct PlaybackStartInfo: Codable, Sendable {
     let itemId: String
     var mediaSourceId: String? = nil
     var audioStreamIndex: Int? = nil
@@ -455,7 +472,7 @@ struct PlaybackStartInfo: Codable {
     }
 }
 
-struct PlaybackProgressInfo: Codable {
+struct PlaybackProgressInfo: Codable, Sendable {
     let itemId: String
     var mediaSourceId: String? = nil
     var positionTicks: Int64? = nil
@@ -479,7 +496,7 @@ struct PlaybackProgressInfo: Codable {
     }
 }
 
-struct PlaybackStopInfo: Codable {
+struct PlaybackStopInfo: Codable, Sendable {
     let itemId: String
     var mediaSourceId: String? = nil
     var positionTicks: Int64? = nil
@@ -493,7 +510,7 @@ struct PlaybackStopInfo: Codable {
     }
 }
 
-struct LiveTvChannelResult: Codable {
+struct LiveTvChannelResult: Codable, Sendable {
     let items: [BaseItemDto]?
     let totalRecordCount: Int?
 
@@ -503,7 +520,7 @@ struct LiveTvChannelResult: Codable {
     }
 }
 
-struct TimerInfoDto: Codable, Identifiable {
+struct TimerInfoDto: Codable, Identifiable, Sendable {
     let id: String?
     let name: String?
     let channelId: String?
@@ -523,7 +540,7 @@ struct TimerInfoDto: Codable, Identifiable {
     }
 }
 
-struct TimerInfoDtoQueryResult: Codable {
+struct TimerInfoDtoQueryResult: Codable, Sendable {
     let items: [TimerInfoDto]?
     let totalRecordCount: Int?
 
@@ -533,7 +550,7 @@ struct TimerInfoDtoQueryResult: Codable {
     }
 }
 
-struct PlaybackInfoResponse: Codable {
+struct PlaybackInfoResponse: Codable, Sendable {
     let mediaSources: [MediaSourceInfo]?
     let playSessionId: String?
 

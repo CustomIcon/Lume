@@ -91,6 +91,7 @@ struct MoviesLibraryView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Filter movies")
+        .toolbarBackground(.hidden)
         .task { await loadMovies() }
     }
 

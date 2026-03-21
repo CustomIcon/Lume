@@ -87,6 +87,7 @@ struct HomeView: View {
             .padding(.vertical)
         }
         .navigationTitle("Home")
+        .toolbarBackground(.hidden)
         .task { await loadHomeData() }
         .refreshable { await loadHomeData() }
     }

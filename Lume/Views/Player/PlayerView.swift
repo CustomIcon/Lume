@@ -403,8 +403,19 @@ struct PlayerView: View {
         }
 
         vm.isLoading = true
-        vm.statusMessage = "Fetching media info..."
+        vm.statusMessage = "Checking local storage..."
         errorMessage = nil
+
+        // 1. Check for local download
+        if let localURL = session.downloadManager.getLocalURL(for: itemId) {
+            print("[Lume] Playing local file: \(localURL.path)")
+            vm.playURL = localURL
+            vm.isLoading = false
+            vm.hasStartedPlaying = true
+            return
+        }
+
+        vm.statusMessage = "Fetching media info..."
 
         if fullItem == nil || fullItem?.mediaSources == nil {
             do {
@@ -446,7 +457,7 @@ struct PlayerView: View {
                 if source.supportsDirectPlay == true {
                     let sourceId = source.id ?? mediaSourceId ?? itemId
                     if item.type == "Channel" || item.type == "TvChannel" {
-                        vm.playURL = session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId)
+                        vm.playURL = await session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId)
                         print("[Lume] Using HLS Live channel stream: \(vm.playURL?.absoluteString ?? "")")
                     } else {
                         var directPlayURL = "\(base)/Videos/\(itemId)/stream?static=true&MediaSourceId=\(sourceId)"
@@ -465,7 +476,7 @@ struct PlayerView: View {
         vm.statusMessage = "Using fallback stream..."
         let sourceId = mediaSourceId ?? itemId
         if item.type == "Channel" || item.type == "TvChannel" {
-            vm.playURL = session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId)
+            vm.playURL = await session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId)
             print("[Lume] Using HLS fallback for channel: \(vm.playURL?.absoluteString ?? "")")
         } else {
             var fallbackURL = "\(base)/Videos/\(itemId)/stream?static=true&MediaSourceId=\(sourceId)"

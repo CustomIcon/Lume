@@ -141,6 +141,22 @@ struct BookReaderView: View {
 
         vm.title = item.displayName
         vm.isLoading = true
+        vm.statusMessage = "Checking local storage..."
+
+        // 1. Check for local download
+        if let localURL = session.downloadManager.getLocalURL(for: itemId) {
+            do {
+                print("[Lume] Loading local book: \(localURL.path)")
+                let data = try Data(contentsOf: localURL)
+                vm.bookData = data
+                vm.bookFormat = vm.detectFormat(container: item.container, data: data)
+                vm.isLoading = false
+                return
+            } catch {
+                print("[Lume] Failed to load local book data: \(error)")
+            }
+        }
+
         vm.statusMessage = "Downloading book..."
 
         do {

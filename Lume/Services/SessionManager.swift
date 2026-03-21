@@ -21,7 +21,8 @@ final class SessionManager {
     private(set) var error: String?
     var activeVideoItem: BaseItemDto?
     var activeBookItem: BaseItemDto?
-
+    
+    let downloadManager = DownloadManager()
     let apiClient: JellyfinAPIClient
 
     private var modelContext: ModelContext?
@@ -32,6 +33,7 @@ final class SessionManager {
 
     func setup(modelContext: ModelContext) async {
         self.modelContext = modelContext
+        downloadManager.setup(modelContext: modelContext)
         LumeInfo("SessionManager starting up...")
         await loadExistingSession()
     }
@@ -158,7 +160,7 @@ final class SessionManager {
     }
 
     func switchServer(to server: ServerConfiguration) async {
-        LumeInfo("Switching to server: \(server.serverName ?? "Unknown") (\(server.serverURL))")
+        LumeInfo("Switching to server: \(server.serverName) (\(server.serverURL))")
         self.currentServer = server
         
         // Find stored session for this server

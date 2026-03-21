@@ -19,6 +19,7 @@ struct LumeApp: App {
             CachedLibrary.self,
             PlaybackPosition.self,
             UserPreference.self,
+            DownloadedItem.self,
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

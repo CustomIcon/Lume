@@ -55,6 +55,7 @@ struct MusicLibraryView: View {
         }
         .navigationTitle(library.displayName)
         .searchable(text: $searchText, prompt: "Filter music")
+        .toolbarBackground(.hidden)
         .task { await loadMusicData() }
         .onChange(of: selectedTab) { _, _ in
             Task { await loadMusicData() }
@@ -237,6 +238,7 @@ struct AlbumDetailView: View {
             }
         }
         .navigationTitle(album.displayName)
+        .toolbarBackground(.hidden)
         .task {
             if let id = album.id {
                 imageURL = await session.apiClient.imageURL(itemId: id, imageType: "Primary", maxWidth: 400, tag: album.imageTags?["Primary"])

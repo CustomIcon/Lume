@@ -65,6 +65,7 @@ struct TVShowsLibraryView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Filter shows")
+        .toolbarBackground(.hidden)
         .task { await loadShows() }
     }
 
@@ -212,6 +213,7 @@ struct SeriesDetailView: View {
             }
         }
         .navigationTitle(series.displayName)
+        .toolbarBackground(.hidden)
         .task { await loadSeriesData() }
     }
 
@@ -249,6 +251,7 @@ struct SeriesDetailView: View {
 }
 
 struct EpisodeRow: View {
+    @Environment(SessionManager.self) private var session
     let episode: BaseItemDto
     let apiClient: JellyfinAPIClient
     @State private var thumbURL: URL?
@@ -284,9 +287,32 @@ struct EpisodeRow: View {
                 if let overview = episode.overview { Text(overview).font(.caption).foregroundStyle(.secondary).lineLimit(2) }
             }
             Spacer()
-            if episode.userData?.played == true { Image(systemName: "checkmark.circle.fill").foregroundStyle(.green) }
+            
+            // Download button for episode
+            Group {
+                if let active = session.downloadManager.activeDownloads[episode.id ?? ""] {
+                    ProgressView(value: active.progress)
+                        .progressViewStyle(.circular)
+                        .controlSize(.small)
+                } else if session.downloadManager.isDownloaded(episode.id ?? "") {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                } else {
+                    Button {
+                        Task {
+                            await session.downloadManager.download(episode, from: session.apiClient)
+                        }
+                    } label: {
+                        Image(systemName: "arrow.down.circle")
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.trailing, 8)
+
+            if episode.userData?.played == true { Image(systemName: "eye.fill").foregroundStyle(.secondary).font(.caption) }
         }
-        .padding(8).background(RoundedRectangle(cornerRadius: 8).fill(.quaternary.opacity(0.5))).contentShape(Rectangle())
+        .padding(8).background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.1))).contentShape(Rectangle())
         .task {
             if let id = episode.id {
                 let tag = episode.imageTags?["Primary"]

@@ -25,17 +25,21 @@ struct SettingsView: View {
     @State private var selectedSection: SettingsSection = .general
 
     var body: some View {
-        NavigationSplitView {
+        HStack(spacing: 0) {
+            // Settings Sidebar
             List(SettingsSection.allCases, selection: $selectedSection) { section in
                 Label(section.rawValue, systemImage: section.icon)
                     .tag(section)
             }
             .listStyle(.sidebar)
-            .navigationTitle("Settings")
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200, max: 220)
-        } detail: {
+            .frame(width: 200)
+            .scrollContentBackground(.hidden)
+            
+            Divider()
+            
+            // Settings Detail
             detailView
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .frame(minWidth: 750, minHeight: 550)
     }
@@ -100,11 +104,12 @@ struct GeneralSettingsView: View {
 
                 Spacer(minLength: 20)
             }
-            .padding(32)
-            .frame(maxWidth: 600, alignment: .leading)
+            .padding(.horizontal, 40)
+            .padding(.vertical, 32)
+            .frame(maxWidth: 600)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .navigationTitle("General")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -126,11 +131,12 @@ struct AppearanceSettingsView: View {
 
                 Spacer(minLength: 20)
             }
-            .padding(32)
-            .frame(maxWidth: 700, alignment: .leading)
+            .padding(.horizontal, 40)
+            .padding(.vertical, 32)
+            .frame(maxWidth: 750)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .navigationTitle("Appearance")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var currentThemePreview: some View {
@@ -369,11 +375,12 @@ struct PlaybackSettingsView: View {
 
                 Spacer(minLength: 20)
             }
-            .padding(32)
-            .frame(maxWidth: 600, alignment: .leading)
+            .padding(.horizontal, 40)
+            .padding(.vertical, 32)
+            .frame(maxWidth: 600)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .navigationTitle("Playback")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -450,11 +457,12 @@ struct ServerSettingsView: View {
 
                 Spacer(minLength: 20)
             }
-            .padding(32)
-            .frame(maxWidth: 600, alignment: .leading)
+            .padding(.horizontal, 40)
+            .padding(.vertical, 32)
+            .frame(maxWidth: 600)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .navigationTitle("Servers")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .alert("Remove Server?", isPresented: $showDeleteAlert) {
             Button("Cancel", role: .cancel) {}
             Button("Remove", role: .destructive) {
@@ -541,9 +549,11 @@ struct AboutSettingsView: View {
 
                 settingsCard {
                     HStack(spacing: 20) {
-                        Image(systemName: "play.rectangle.fill")
-                            .font(.system(size: 44))
-                            .foregroundStyle(.tint)
+                        Image("Logo")
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 80, height: 80)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
 
                         VStack(alignment: .leading, spacing: 4) {
                             Text("Lume")
@@ -613,11 +623,12 @@ struct AboutSettingsView: View {
 
                 Spacer(minLength: 20)
             }
-            .padding(32)
-            .frame(maxWidth: 600, alignment: .leading)
+            .padding(.horizontal, 40)
+            .padding(.vertical, 32)
+            .frame(maxWidth: 600)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .navigationTitle("About")
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private func logColor(_ level: LogEntry.LogLevel) -> Color {

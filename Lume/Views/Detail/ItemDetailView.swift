@@ -19,55 +19,27 @@ struct ItemDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                // Backdrop
-                ZStack(alignment: .bottomLeading) {
-                    RemoteImageView(url: backdropURL, section: CacheSection.from(itemType: displayItem.type), cornerRadius: 0)
-                        .frame(height: 350)
-                        .frame(maxWidth: .infinity)
-                        .clipped()
-                        .overlay {
-                            LinearGradient(
-                                colors: [.clear, .clear, ThemeManager.shared.currentFlavor.backgroundColor],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        }
-
-                    HStack(alignment: .bottom, spacing: 24) {
-                        // Poster
-                        let isWide = (displayItem.primaryImageAspectRatio ?? (displayItem.type == "Episode" ? 1.77 : 0.66)) > 1.2
-                        let isSquare = displayItem.type == "MusicAlbum" || displayItem.type == "Audio"
-                        let pWidth: CGFloat = isWide ? 250 : isSquare ? 200 : 150
-                        let pHeight: CGFloat = isSquare ? pWidth : (isWide ? pWidth / 1.77 : pWidth * 1.5)
-                        
-                        RemoteImageView(url: posterURL, section: CacheSection.from(itemType: displayItem.type), cornerRadius: 8)
-                            .frame(width: pWidth, height: pHeight)
-                            .liquidCard()
-
-                        // Title & metadata
-                        VStack(alignment: .leading, spacing: 8) {
-                            if let episodeLabel = displayItem.episodeLabel {
-                                Text(episodeLabel)
-                                    .font(.subheadline)
-                                    .foregroundStyle(.secondary)
+                if displayItem.type != "Book" {
+                    // Backdrop
+                    ZStack(alignment: .bottomLeading) {
+                        RemoteImageView(url: backdropURL, section: CacheSection.from(itemType: displayItem.type), cornerRadius: 0)
+                            .frame(height: 350)
+                            .frame(maxWidth: .infinity)
+                            .clipped()
+                            .overlay {
+                                LinearGradient(
+                                    colors: [.clear, .clear, ThemeManager.shared.currentFlavor.backgroundColor],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
                             }
 
-                            Text(displayItem.displayName)
-                                .font(.largeTitle)
-                                .fontWeight(.bold)
-
-                            if let seriesName = displayItem.seriesName {
-                                Text(seriesName)
-                                    .font(.title3)
-                                    .foregroundStyle(.secondary)
-                            }
-
-                            metadataRow
-
-                            actionButtons
-                        }
+                        headerContent
                     }
-                    .padding()
+                } else {
+                    // No backdrop for books, just the content
+                    headerContent
+                        .padding(.top, 80) // Space for the top bar
                 }
 
                 // Overview
@@ -162,7 +134,46 @@ struct ItemDetailView: View {
             }
         }
         .navigationTitle(displayItem.displayName)
+        .toolbarBackground(.hidden)
         .task { await loadDetails() }
+    }
+
+    private var headerContent: some View {
+        HStack(alignment: .bottom, spacing: 24) {
+            // Poster
+            let isWide = (displayItem.primaryImageAspectRatio ?? (displayItem.type == "Episode" ? 1.77 : 0.66)) > 1.2
+            let isSquare = displayItem.type == "MusicAlbum" || displayItem.type == "Audio"
+            let pWidth: CGFloat = isWide ? 250 : isSquare ? 200 : 150
+            let pHeight: CGFloat = isSquare ? pWidth : (isWide ? pWidth / 1.77 : pWidth * 1.5)
+            
+            RemoteImageView(url: posterURL, section: CacheSection.from(itemType: displayItem.type), cornerRadius: 8, title: displayItem.displayName)
+                .frame(width: pWidth, height: pHeight)
+                .liquidCard()
+
+            // Title & metadata
+            VStack(alignment: .leading, spacing: 8) {
+                if let episodeLabel = displayItem.episodeLabel {
+                    Text(episodeLabel)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                Text(displayItem.displayName)
+                    .font(.largeTitle)
+                    .fontWeight(.bold)
+
+                if let seriesName = displayItem.seriesName {
+                    Text(seriesName)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                }
+
+                metadataRow
+
+                actionButtons
+            }
+        }
+        .padding()
     }
 
     private var metadataRow: some View {
@@ -232,8 +243,59 @@ struct ItemDetailView: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.large)
+            
+            downloadButton
         }
     }
+    
+    private var downloadButton: some View {
+        Group {
+            if let active = session.downloadManager.activeDownloads[displayItem.id ?? ""] {
+                HStack(spacing: 8) {
+                    ProgressView(value: active.progress)
+                        .progressViewStyle(.circular)
+                        .controlSize(.small)
+                    
+                    Button {
+                        if active.isPaused {
+                            Task { await session.downloadManager.resumeDownload(itemId: displayItem.id ?? "", from: session.apiClient) }
+                        } else {
+                            session.downloadManager.pauseDownload(itemId: displayItem.id ?? "")
+                        }
+                    } label: {
+                        Image(systemName: active.isPaused ? "play.fill" : "pause.fill")
+                            .font(.caption)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
+            } else if session.downloadManager.isDownloaded(displayItem.id ?? "") {
+                Button {
+                    // Logic to delete or show menu
+                } label: {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                }
+                .contextMenu {
+                    Button(role: .destructive) {
+                        session.downloadManager.deleteDownload(itemId: displayItem.id ?? "")
+                    } label: {
+                        Label("Delete Download", systemImage: "trash")
+                    }
+                }
+            } else {
+                Button {
+                    Task {
+                        await session.downloadManager.download(displayItem, from: session.apiClient)
+                    }
+                } label: {
+                    Image(systemName: "arrow.down.circle")
+                }
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
 
     private func loadDetails() async {
         guard let itemId = item.id else { return }

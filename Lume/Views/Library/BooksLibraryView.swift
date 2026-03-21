@@ -90,6 +90,7 @@ struct BooksLibraryView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Filter books")
+        .toolbarBackground(.hidden)
         .task { await loadBooks() }
     }
 
@@ -150,7 +151,7 @@ struct BookListRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RemoteImageView(url: imageURL, section: .books, cornerRadius: 4)
+            RemoteImageView(url: imageURL, section: .books, cornerRadius: 4, title: item.displayName)
                 .frame(width: 40, height: 60)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.displayName)

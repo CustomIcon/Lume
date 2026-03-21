@@ -27,5 +27,11 @@ struct RootView: View {
             }
         }
         .animation(.easeInOut, value: session.authState)
+        .onAppear {
+            NSApp.windows.forEach { window in
+                window.titlebarAppearsTransparent = true
+                window.titleVisibility = .hidden
+            }
+        }
     }
 }

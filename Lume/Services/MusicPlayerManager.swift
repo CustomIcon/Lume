@@ -10,7 +10,11 @@ final class MusicPlayerManager {
     var currentSong: BaseItemDto?
     var queue: [BaseItemDto] = []
     
+    enum RepeatMode { case off, one, all }
+    
     var isPlaying = false
+    var repeatMode: RepeatMode = .off
+    var isShuffled = false
     var progress: Double = 0
     var duration: Double = 0
     var bufferedTime: Double = 0
@@ -57,7 +61,7 @@ final class MusicPlayerManager {
         }
         
         Task {
-            let url = session.apiClient.audioStreamURL(itemId: itemId)
+            let url = await session.apiClient.audioStreamURL(itemId: itemId)
             let auth = await session.apiClient.authorizationHeader
             
             guard let url = url else { return }
@@ -171,12 +175,44 @@ final class MusicPlayerManager {
         queue = []
         MPNowPlayingInfoCenter.default().nowPlayingInfo = nil
     }
+
+    func enqueue(_ items: [BaseItemDto], atEnd: Bool = true) {
+        if atEnd {
+            queue.append(contentsOf: items)
+        } else if let current = currentSong, let idx = queue.firstIndex(where: { $0.id == current.id }) {
+            queue.insert(contentsOf: items, at: idx + 1)
+        } else {
+            queue.insert(contentsOf: items, at: 0)
+        }
+    }
     
     func next() {
+        if repeatMode == .one {
+            seek(to: 0)
+            avPlayer?.play()
+            return
+        }
+        
         guard let current = currentSong,
-              let idx = queue.firstIndex(where: { $0.id == current.id }),
-              idx + 1 < queue.count else { return }
-        play(song: queue[idx + 1])
+              let idx = queue.firstIndex(where: { $0.id == current.id }) else {
+            if !queue.isEmpty { play(song: isShuffled ? queue.randomElement()! : queue[0]) }
+            return
+        }
+        
+        if isShuffled && queue.count > 1 {
+            var nextIdx = Int.random(in: 0..<queue.count)
+            while nextIdx == idx && queue.count > 1 { nextIdx = Int.random(in: 0..<queue.count) }
+            play(song: queue[nextIdx])
+            return
+        }
+        
+        if idx + 1 < queue.count {
+            play(song: queue[idx + 1])
+        } else if repeatMode == .all && !queue.isEmpty {
+            play(song: queue[0])
+        } else {
+            stop()
+        }
     }
     
     func previous() {

@@ -28,6 +28,20 @@ struct ItemContextMenu: ViewModifier {
                 } label: {
                     Label("Play", systemImage: "play.fill")
                 }
+                
+                if item.type == "Audio" || item.type == "MusicAlbum" || item.type == "Playlist" {
+                    Button {
+                        MusicPlayerManager.shared.enqueue([item], atEnd: false)
+                    } label: {
+                        Label("Play Next", systemImage: "text.insert")
+                    }
+                    
+                    Button {
+                        MusicPlayerManager.shared.enqueue([item], atEnd: true)
+                    } label: {
+                        Label("Add to Queue", systemImage: "text.append")
+                    }
+                }
             }
 
             if let onDetail {
@@ -56,6 +70,17 @@ struct ItemContextMenu: ViewModifier {
                     isPlayed ? "Mark as Unwatched" : "Mark as Watched",
                     systemImage: isPlayed ? "eye.slash.fill" : "eye.fill"
                 )
+            }
+
+            if !session.downloadManager.isDownloaded(item.id ?? ""), (item.type == "Movie" || item.type == "Episode" || item.type == "Book" || item.type == "Audio") {
+                Divider()
+                Button {
+                    Task {
+                        await session.downloadManager.download(item, from: session.apiClient)
+                    }
+                } label: {
+                    Label("Download", systemImage: "arrow.down.circle")
+                }
             }
         }
     }

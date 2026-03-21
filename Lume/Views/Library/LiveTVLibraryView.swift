@@ -70,6 +70,7 @@ struct LiveTVLibraryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .navigationTitle(library.displayName)
         .searchable(text: $searchText, prompt: selectedTab == 0 ? "Search channels" : "Search recordings")
+        .toolbarBackground(.hidden)
         .task {
             await loadData()
         }
