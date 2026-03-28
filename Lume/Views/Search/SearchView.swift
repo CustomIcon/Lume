@@ -4,7 +4,9 @@ struct SearchView: View {
     @Environment(SessionManager.self) private var session
     @State private var searchText = ""
     @State private var results: [BaseItemDto] = []
+    @State private var suggestions: [BaseItemDto] = []
     @State private var isSearching = false
+    @State private var isLoadingSuggestions = false
     @State private var selectedItem: BaseItemDto?
     @State private var searchTask: Task<Void, Never>?
 
@@ -15,11 +17,37 @@ struct SearchView: View {
     var body: some View {
         VStack(spacing: 0) {
             if searchText.isEmpty {
-                ContentUnavailableView(
-                    "Search Your Library",
-                    systemImage: "magnifyingglass",
-                    description: Text("Search across all your libraries for movies, shows, music, and more.")
-                )
+                if isLoadingSuggestions {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if suggestions.isEmpty {
+                    ContentUnavailableView(
+                        "Search Your Library",
+                        systemImage: "magnifyingglass",
+                        description: Text("Search across all your libraries for movies, shows, music, and more.")
+                    )
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 16) {
+                            Text("Discover")
+                                .font(.title2)
+                                .fontWeight(.bold)
+                                .padding(.horizontal)
+                            
+                            LazyVGrid(columns: columns, spacing: 16) {
+                                ForEach(suggestions) { item in
+                                    ItemPosterCard(item: item, apiClient: session.apiClient, width: 150)
+                                        .onTapGesture { selectedItem = item }
+                                        .itemContextMenu(item: item, session: session, onDetail: {
+                                            selectedItem = item
+                                        })
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                        .padding(.vertical)
+                    }
+                }
             } else if isSearching {
                 ProgressView("Searching...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -68,6 +96,9 @@ struct SearchView: View {
             }
         }
         .searchable(text: $searchText, prompt: "Search all libraries...")
+        .task {
+            await loadSuggestions()
+        }
         .onChange(of: searchText) { _, newValue in
             searchTask?.cancel()
             guard !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -80,6 +111,21 @@ struct SearchView: View {
                 await performSearch(query: newValue)
             }
         }
+    }
+
+    private func loadSuggestions() async {
+        guard suggestions.isEmpty else { return }
+        isLoadingSuggestions = true
+        do {
+            let result = try await session.apiClient.getItems(
+                includeItemTypes: ["Movie", "Series", "MusicArtist"],
+                sortBy: ["IsFavoriteOrLiked", "Random"],
+                limit: 24,
+                recursive: true
+            )
+            suggestions = result.items ?? []
+        } catch {}
+        isLoadingSuggestions = false
     }
 
     private func performSearch(query: String) async {

@@ -728,7 +728,7 @@ actor JellyfinAPIClient {
         return data
     }
 
-    func searchItems(query: String, limit: Int = 24, includeItemTypes: [String]? = nil) async throws -> BaseItemDtoQueryResult {
+    func searchItems(query: String, parentId: String? = nil, limit: Int = 24, includeItemTypes: [String]? = nil) async throws -> BaseItemDtoQueryResult {
         guard let userId else { throw APIError.unauthorized }
         var queryItems = [
             URLQueryItem(name: "SearchTerm", value: query),
@@ -736,6 +736,9 @@ actor JellyfinAPIClient {
             URLQueryItem(name: "Recursive", value: "true"),
             URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Overview,UserData,MediaSources")
         ]
+        if let parentId {
+            queryItems.append(URLQueryItem(name: "ParentId", value: parentId))
+        }
         if let includeItemTypes {
             queryItems.append(URLQueryItem(name: "IncludeItemTypes", value: includeItemTypes.joined(separator: ",")))
         }

@@ -213,6 +213,7 @@ struct VLCVideoPlayer: NSViewRepresentable {
 final class PlayerViewModel {
     var player: AVPlayer?
     var vlcProxy = VLCVideoPlayer.Proxy()
+    var isPlaying = false
 
     var isLoading = true
     var statusMessage: String = "Finding best stream..."
@@ -256,15 +257,84 @@ final class PlayerViewModel {
     }
 
     /// Load track lists from VLC player once playback has started.
-    func loadTracksFromVLC() {
+    func loadTracksFromVLC(apiClient: JellyfinAPIClient, item: BaseItemDto) async {
         guard !tracksLoaded else { return }
+        
+        // First, attach all external/Jellyfin subtitles so VLC sees them
+        await attachSubtitles(apiClient: apiClient, item: item)
+        
+        // VLC needs a tiny moment to register the newly slaved subtitle tracks
+        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+        
         vlcSubtitleTracks = vlcProxy.subtitleTracks
         vlcAudioTracks = vlcProxy.audioTracks
-        selectedSubtitleIndex = vlcProxy.currentSubtitleIndex
-        selectedAudioIndex = vlcProxy.currentAudioIndex
+        
+        // 1. Resolve preferred languages from settings
+        let prefSub = UserDefaults.standard.string(forKey: "preferredSubLanguage") ?? "eng"
+        let prefAudio = UserDefaults.standard.string(forKey: "preferredAudioLanguage") ?? "eng"
+        let subsOn = UserDefaults.standard.bool(forKey: "defaultSubtitlesOn")
+        
+        // 2. Automatch Audio
+        if let bestAudio = findBestTrack(in: vlcAudioTracks, lang: prefAudio) {
+            vlcProxy.setAudioTrack(bestAudio.index)
+            selectedAudioIndex = bestAudio.index
+        } else {
+            selectedAudioIndex = vlcProxy.currentAudioIndex
+        }
+        
+        // 3. Automatch Subtitles (only if requested in settings or default on)
+        if subsOn {
+            if let bestSub = findBestTrack(in: vlcSubtitleTracks, lang: prefSub) {
+                print("[Lume] Automatched subtitle: \(bestSub.name)")
+                vlcProxy.setSubtitleTrack(bestSub.index)
+                selectedSubtitleIndex = bestSub.index
+            } else {
+                selectedSubtitleIndex = vlcProxy.currentSubtitleIndex
+            }
+        } else {
+            // Default to off if settings say so, but still detect current for UI
+            vlcProxy.setSubtitleTrack(-1)
+            selectedSubtitleIndex = -1
+        }
+        
         if !vlcSubtitleTracks.isEmpty || !vlcAudioTracks.isEmpty {
             tracksLoaded = true
         }
+    }
+    
+    func attachSubtitles(apiClient: JellyfinAPIClient, item: BaseItemDto) async {
+        let base = await apiClient.getBaseURL()
+        let token = await apiClient.getAccessToken()
+        let mediaSource = item.mediaSources?.first { $0.id == mediaSourceId } ?? item.mediaSources?.first
+        
+        guard let sourceId = mediaSource?.id, let streams = mediaSource?.mediaStreams else { return }
+        
+        for stream in streams where stream.type == "Subtitle" {
+            // If it has a delivery URL or is an external track, attach it to VLC
+            if let delivery = stream.deliveryUrl {
+                let full = base + delivery + (delivery.contains("?") ? "&api_key=\(token ?? "")" : "?api_key=\(token ?? "")")
+                if let url = URL(string: full) {
+                    print("[Lume] Attaching subtitle: \(stream.displayTitle ?? "Unknown") -> \(full)")
+                    vlcProxy.addSubtitle(url: url)
+                }
+            } else if stream.isExternal == true || stream.isTextSubtitleStream == true {
+                // Fallback: construct standard Jellyfin subtitle stream URL
+                let codec = stream.codec ?? "srt"
+                let idx = stream.index ?? 0
+                let urlString = "\(base)/Videos/\(item.id ?? "")/\(sourceId)/Subtitles/\(idx)/0/Stream.\(codec)?api_key=\(token ?? "")"
+                if let url = URL(string: urlString) {
+                    print("[Lume] Attaching fallback subtitle: \(urlString)")
+                    vlcProxy.addSubtitle(url: url)
+                }
+            }
+        }
+    }
+    
+    private func findBestTrack(in tracks: [VLCTrackInfo], lang: String) -> VLCTrackInfo? {
+        let l = lang.lowercased()
+        // Try exact match in name (which often contains language code or name)
+        return tracks.first { $0.name.lowercased().contains(l) } 
+            ?? tracks.first { $0.name.lowercased().contains("english") && l == "eng" }
     }
 
     deinit {
@@ -323,12 +393,11 @@ struct PlayerView: View {
                             vm.statusMessage = "Buffering..."
                         }
                     case .playing:
+                        vm.isPlaying = true
                         vm.hasStartedPlaying = true
                         vm.isLoading = false
-                        // Load VLC's native track lists once playback starts
-                        vm.loadTracksFromVLC()
-                        
-                        // Report playback start if not already reported
+                        vm.vlcProxy.setSubtitleScale(vm.subtitleScale)
+                        Task { await vm.loadTracksFromVLC(apiClient: session.apiClient, item: resolvedItem) }
                         if vm.lastReportedTime == -999.0 {
                             let ticks = Int64(vm.currentPlaybackTime * 10_000_000)
                             let startInfo = PlaybackStartInfo(
@@ -341,7 +410,7 @@ struct PlayerView: View {
                             vm.lastReportedTime = vm.currentPlaybackTime
                         }
                     case .paused:
-                        // Report pause
+                        vm.isPlaying = false
                         let ticks = Int64(vm.currentPlaybackTime * 10_000_000)
                         let progressInfo = PlaybackProgressInfo(
                             itemId: item.id ?? "",
@@ -427,7 +496,7 @@ struct PlayerView: View {
                     // Re-load tracks so the new one shows up in menu
                     DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
                         vm.tracksLoaded = false
-                        vm.loadTracksFromVLC()
+                        Task { await vm.loadTracksFromVLC(apiClient: session.apiClient, item: resolvedItem) }
                     }
                 }
             }
@@ -442,8 +511,7 @@ struct PlayerView: View {
         .focusEffectDisabled()
         .focused($isFocused)
         .onKeyPress(.space) {
-            vm.vlcProxy.togglePlay()
-            triggerControls()
+            togglePlay()
             return .handled
         }
         .onKeyPress { press in
@@ -544,6 +612,13 @@ struct PlayerView: View {
             vm.playURL = URL(string: fallbackURL)
         }
     }
+    
+    private func togglePlay() {
+        vm.vlcProxy.togglePlay()
+        triggerControls()
+        // Optimistic update for UI feel
+        vm.isPlaying.toggle()
+    }
 
     private func triggerControls() {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.8)) {
@@ -559,7 +634,7 @@ struct PlayerView: View {
             }
             // Retry loading tracks if not loaded yet (VLC sometimes needs a moment)
             if vm.hasStartedPlaying && !vm.tracksLoaded {
-                vm.loadTracksFromVLC()
+                Task { await vm.loadTracksFromVLC(apiClient: session.apiClient, item: resolvedItem) }
             }
             
             // Periodically report progress (every 10 seconds)
@@ -691,8 +766,8 @@ struct PlayerView: View {
                     }
                     .buttonStyle(.plain)
 
-                    Button { vm.vlcProxy.togglePlay() } label: {
-                        Image(systemName: vm.vlcProxy.rate == 0 ? "play.fill" : "pause.fill")
+                    Button { togglePlay() } label: {
+                        Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
                             .font(.system(size: 44))
                             .foregroundStyle(.white)
                             .shadow(color: .white.opacity(0.4), radius: 10)

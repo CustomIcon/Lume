@@ -1,17 +1,23 @@
 # Lume
 
-A modern, native Jellyfin client for macOS, designed with a focus on aesthetics, performance, and the native Mac experience.
+A modern, native Jellyfin client for macOS, designed with a focus on aesthetics, performance, and the premium Mac experience.
 
 ![Home Screen](screenshots/Home.png)
 
 ## 🌟 Features
 
-*   **Native & Fast**: Built from the ground up with **SwiftUI** and **SwiftData** for a lightning-fast, resource-efficient experience.
-*   **VLC Playback Engine**: Powered by **VLCKit** for robust support of virtually any video format, including advanced subtitle rendering and audio track switching.
-*   **Aesthetic "Liquid" Design**: A premium interface featuring glassmorphism, smooth animations, and a cohesive "liquid" design system that feels right at home on macOS.
-*   **Smart Library Management**: Effortlessly browse your Movies, TV Shows, and Music libraries with native grid views and detailed metadata.
-*   **Custom Themes**: Choose from multiple curated themes (Dark, Light, Slate, Forest, and more) to match your workspace.
-*   **Automated Content Discovery**: Intelligent "Continue Watching" and "Recently Added" sections keep your favorite media front and center.
+*   **Native & Fast**: Built from the ground up with **SwiftUI** and **SwiftData** for a lightning-fast, resource-efficient experience tailored specifically for macOS.
+*   **VLC Playback Engine**: Powered by **VLCKit** for robust support of virtually any video format, including HDR content, hardware decoding, and precise audio/subtitle track switching.
+*   **Offline Downloads**: A professional download manager that supports background transfers, pausing/resuming, and offline playback of your favorite movies and shows.
+*   **Aesthetic "Liquid" Design**: A premium interface featuring glassmorphism, vibrant gradients, and smooth animations that feel right at home on Sequoia and beyond.
+*   **Comprehensive Media Support**:
+    *   **Movies & TV**: Detailed metadata, "Next Up" tracking, and seasonal organization.
+    *   **Music**: High-fidelity music browsing with categorized lists (Albums, Artists, Playlists).
+    *   **Live TV**: Access your IPTV channels and live recordings directly.
+    *   **Books**: A built-in reader for your e-book collections.
+*   **Advanced Subtitle System**: Native support for embedded and external `.srt` files, synchronized with Jellyfin, including customizable font sizes and automatic language matching.
+*   **Quick Connect**: Seamless login experience using **Device Code/QR Login** for secure and effortless server pairing.
+*   **Custom Themes**: Multiple curated flavors (Dark, Light, Slate, Forest, etc.) to customize your experience.
 
 ## 📸 Screenshots
 
@@ -19,27 +25,35 @@ A modern, native Jellyfin client for macOS, designed with a focus on aesthetics,
 | :---: | :---: |
 | ![Home](screenshots/Home.png) | ![Movies](screenshots/Movies.png) |
 
-| Music | Search |
+| TV Shows | Music |
 | :---: | :---: |
-| ![Music](screenshots/Music.png) | ![Search](screenshots/Search.png) |
+| ![Shows](screenshots/Shows.png) | ![Music](screenshots/Music.png) |
 
-| Settings | Onboarding |
+| Live TV | Books |
 | :---: | :---: |
-| ![Settings](screenshots/Settings.png) | ![Onboarding](screenshots/OnBoarding.png) |
+| ![LiveTV](screenshots/LiveTV.png) | ![Books](screenshots/Books.png) |
+
+| Video Player | Downloads |
+| :---: | :---: |
+| ![Player](screenshots/Player.png) | ![Downloads](screenshots/Downloads.png) |
+
+| Settings | Quick Connect |
+| :---: | :---: |
+| ![Settings](screenshots/Settings.png) | ![Onboarding](screenshots/DeviceCodeLogin.png) |
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 
 *   macOS 14.0 or later.
-*   A running **Jellyfin** server access.
+*   A running **Jellyfin** server.
 
 ### Installation
 
 1.  Download the latest **Lume.dmg** from the [Releases](https://git.cubable.date/CustomIcon/Lume/releases) page.
 2.  Open the DMG and drag **Lume** to your **Applications** folder.
-3.  Open up `Terminal` and run the following command: `xattr -d com.apple.quarantine /Applications/Lume.app`
-4.  Launch Lume and enter your server URL to begin the onboarding process.
+3.  Launch Lume and enter your server URL to begin the onboarding process.
+4.  *Note: If you encounter a security warning, run `xattr -d com.apple.quarantine /Applications/Lume.app` in Terminal.*
 
 ## 🛠 Development
 
@@ -62,10 +76,7 @@ Lume is built with modern Apple technologies:
 
 ## 📄 AI / LLM usage DISCLAIMER
 
-This project is partially developed with the help of AI. Such as Documenting functions, VLCKit implemetation and This very README.md file was also generated with the help of AI. other than that, all the code was written by either me or a contributor.
-
-## Roadmap
-Please view [ROADMAP.md](ROADMAP.md) for the roadmap.
+This project is partially developed with the help of AI (Antigravity). This includes logic implementation for VLCKit, subtitle synchronization, and the initial creation of certain documentation files. Core architecture and design directions are human-driven.
 
 ## 📄 License
 

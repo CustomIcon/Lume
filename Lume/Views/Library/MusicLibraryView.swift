@@ -26,6 +26,9 @@ struct MusicLibraryView: View {
     @State private var playlists: [BaseItemDto] = []
     @State private var isLoading = true
     @State private var searchText = ""
+    @State private var searchResults: [BaseItemDto] = []
+    @State private var isSearching = false
+    @State private var searchTask: Task<Void, Swift.Error>?
 
     private let gridColumns = [
         GridItem(.adaptive(minimum: 160, maximum: 200), spacing: 16)
@@ -33,46 +36,145 @@ struct MusicLibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Picker("", selection: $selectedTab) {
-                ForEach(MusicTab.allCases, id: \.self) { tab in
-                    Text(tab.rawValue).tag(tab)
+            if searchText.isEmpty {
+                Picker("", selection: $selectedTab) {
+                    ForEach(MusicTab.allCases, id: \.self) { tab in
+                        Text(tab.rawValue).tag(tab)
+                    }
                 }
-            }
-            .pickerStyle(.segmented)
-            .padding()
+                .pickerStyle(.segmented)
+                .padding()
 
-            Divider()
+                Divider()
 
-            if isLoading {
-                ProgressView("Loading music...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                if isLoading {
+                    ProgressView("Loading music...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        switch selectedTab {
+                        case .suggestions:
+                            suggestionsGrid
+                        case .artists:
+                            artistsGrid
+                        case .albumArtists:
+                            albumArtistsGrid
+                        case .albums:
+                            albumsGrid
+                        case .genres:
+                            genresGrid
+                        case .songs:
+                            songsList
+                        case .playlists:
+                            playlistsGrid
+                        }
+                    }
+                }
             } else {
-                ScrollView {
-                    switch selectedTab {
-                    case .suggestions:
-                        suggestionsGrid
-                    case .artists:
-                        artistsGrid
-                    case .albumArtists:
-                        albumArtistsGrid
-                    case .albums:
-                        albumsGrid
-                    case .genres:
-                        genresGrid
-                    case .songs:
-                        songsList
-                    case .playlists:
-                        playlistsGrid
+                // Search Results View for Music
+                if isSearching && searchResults.isEmpty {
+                    ProgressView("Searching...")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if searchResults.isEmpty {
+                    ContentUnavailableView.search(text: searchText)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 24) {
+                            let grouped = Dictionary(grouping: searchResults, by: { $0.type ?? "Unknown" })
+                            let sortedKeys = grouped.keys.sorted()
+
+                            ForEach(sortedKeys, id: \.self) { type in
+                                if let items = grouped[type] {
+                                    musicSearchSection(title: displayNameForType(type), items: items)
+                                }
+                            }
+                        }
+                        .padding()
                     }
                 }
             }
         }
         .navigationTitle(library.displayName)
-        .searchable(text: $searchText, prompt: "Filter music")
-        .toolbarBackground(.hidden)
+        .searchable(text: $searchText, prompt: "Search music library")
         .task { await loadMusicData() }
         .onChange(of: selectedTab) { _, _ in
             Task { await loadMusicData() }
+        }
+        .onChange(of: searchText) { _, newValue in
+            performSearch(query: newValue)
+        }
+    }
+
+    private func performSearch(query: String) {
+        searchTask?.cancel()
+        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else {
+            searchResults = []
+            isSearching = false
+            return
+        }
+
+        isSearching = true
+        searchTask = Task {
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            
+            do {
+                let result = try await session.apiClient.searchItems(
+                    query: query,
+                    parentId: library.id,
+                    limit: 48,
+                    includeItemTypes: ["Audio", "MusicAlbum", "MusicArtist", "Playlist"]
+                )
+                if !Task.isCancelled {
+                    searchResults = result.items ?? []
+                }
+            } catch {}
+            isSearching = false
+        }
+    }
+
+    private func displayNameForType(_ type: String) -> String {
+        switch type {
+        case "Audio": return "Songs"
+        case "MusicAlbum": return "Albums"
+        case "MusicArtist": return "Artists"
+        case "Playlist": return "Playlists"
+        default: return type
+        }
+    }
+
+    private func musicSearchSection(title: String, items: [BaseItemDto]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.title3).fontWeight(.bold)
+            if title == "Songs" {
+                LazyVStack(spacing: 1) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, song in
+                        NavigationLink(value: song) {
+                            SongRow(song: song, index: index + 1, apiClient: session.apiClient)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            } else {
+                LazyVGrid(columns: gridColumns, spacing: 20) {
+                    ForEach(items, id: \.id) { item in
+                        NavigationLink(value: item) {
+                            if title == "Artists" {
+                                VStack(spacing: 8) {
+                                    ArtistImageView(artist: item, apiClient: session.apiClient)
+                                        .frame(width: 160, height: 160)
+                                        .clipShape(Circle())
+                                    Text(item.displayName).font(.caption).fontWeight(.medium).lineLimit(1)
+                                }
+                            } else {
+                                ItemPosterCard(item: item, apiClient: session.apiClient, width: 160)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
         }
     }
 
