@@ -5,6 +5,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
     case general = "General"
     case appearance = "Appearance"
     case playback = "Playback"
+    case storage = "Storage"
     case servers = "Servers"
     case about = "About"
 
@@ -15,6 +16,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .general: return "gear"
         case .appearance: return "paintbrush.fill"
         case .playback: return "play.circle.fill"
+        case .storage: return "folder.fill"
         case .servers: return "server.rack"
         case .about: return "info.circle.fill"
         }
@@ -23,6 +25,8 @@ enum SettingsSection: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @State private var selectedSection: SettingsSection = .general
+    @AppStorage("enableAnimations") private var enableAnimations = true
+    @Environment(SessionManager.self) private var session
 
     var body: some View {
         HStack(spacing: 0) {
@@ -46,27 +50,33 @@ struct SettingsView: View {
 
     @ViewBuilder
     private var detailView: some View {
-        switch selectedSection {
-        case .general:
-            GeneralSettingsView()
-        case .appearance:
-            AppearanceSettingsView()
-        case .playback:
-            PlaybackSettingsView()
-        case .servers:
-            ServerSettingsView()
-        case .about:
-            AboutSettingsView()
+        ZStack {
+            switch selectedSection {
+            case .general:
+                GeneralSettingsView()
+            case .appearance:
+                AppearanceSettingsView()
+            case .playback:
+                PlaybackSettingsView()
+            case .storage:
+                StorageSettingsView()
+            case .servers:
+                ServerSettingsView()
+            case .about:
+                AboutSettingsView()
+            }
         }
+        .id(selectedSection)
+        .transition(enableAnimations ? .asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.98)), removal: .opacity) : .identity)
+        .animation(enableAnimations ? .spring(response: 0.35, dampingFraction: 0.85) : nil, value: selectedSection)
     }
 }
 
 struct GeneralSettingsView: View {
-    @AppStorage("gridColumns") private var gridColumns = 5
     @AppStorage("showSidebarLabels") private var showSidebarLabels = true
-    @AppStorage("homeSectionLimit") private var homeSectionLimit = 16
     @AppStorage("enableAnimations") private var enableAnimations = true
     @AppStorage("launchToHome") private var launchToHome = true
+    @AppStorage("playTrailerInHome") private var playTrailerInHome = false
 
     var body: some View {
         ScrollView {
@@ -75,28 +85,9 @@ struct GeneralSettingsView: View {
 
                 settingsCard {
                     VStack(alignment: .leading, spacing: 16) {
-                        settingsRowLabel("Library Grid", icon: "square.grid.3x3")
-                        Stepper("Columns: \(gridColumns)", value: $gridColumns, in: 2...10)
-                        Text("Number of columns in grid views for movies, shows, etc.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                settingsCard {
-                    VStack(alignment: .leading, spacing: 16) {
-                        settingsRowLabel("Home Screen", icon: "house")
-                        Stepper("Items per section: \(homeSectionLimit)", value: $homeSectionLimit, in: 4...40, step: 4)
-                        Text("Maximum items shown in each home screen row.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Toggle("Launch to Home screen", isOn: $launchToHome)
-                    }
-                }
-
-                settingsCard {
-                    VStack(alignment: .leading, spacing: 16) {
                         settingsRowLabel("Interface", icon: "macwindow")
+                        Toggle("Launch to Home screen", isOn: $launchToHome)
+                        Toggle("Play trailer in Home (BETA)", isOn: $playTrailerInHome)
                         Toggle("Show sidebar labels", isOn: $showSidebarLabels)
                         Toggle("Enable animations", isOn: $enableAnimations)
                     }
@@ -422,12 +413,21 @@ struct ServerSettingsView: View {
                 }
 
                 if !servers.isEmpty {
-                    Button {
-                        Task { await session.disconnectServer() }
-                    } label: {
-                        Label("Add Another Server", systemImage: "plus.circle")
+                    HStack(spacing: 12) {
+                        Button {
+                            session.addAnotherUser()
+                        } label: {
+                            Label("Add Account", systemImage: "person.badge.plus")
+                        }
+                        .buttonStyle(.bordered)
+                        
+                        Button {
+                            session.addAnotherServer()
+                        } label: {
+                            Label("Add Server", systemImage: "plus.circle")
+                        }
+                        .buttonStyle(.bordered)
                     }
-                    .buttonStyle(.bordered)
                 }
 
                 if let currentSession = session.currentSession {
@@ -477,51 +477,111 @@ struct ServerSettingsView: View {
 
     private func serverCard(_ server: ServerConfiguration) -> some View {
         let isCurrent = session.currentServer?.id == server.id
+        let deviceID = server.deviceID
+        let serverSessions = sessions.filter { $0.serverID == deviceID }
+        
         return settingsCard {
-            HStack(spacing: 16) {
-                Image(systemName: isCurrent ? "checkmark.circle.fill" : "server.rack")
-                    .font(.title2)
-                    .foregroundStyle(isCurrent ? .green : .secondary)
-                    .frame(width: 32)
-
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(server.serverName.isEmpty ? "Server" : server.serverName)
-                            .font(.headline)
-                        if isCurrent {
-                            Text("ACTIVE")
-                                .font(.system(size: 9, weight: .bold))
-                                .padding(.horizontal, 5)
-                                .padding(.vertical, 2)
-                                .background(.green.opacity(0.15), in: Capsule())
-                                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 16) {
+                    Image(systemName: isCurrent ? "checkmark.circle.fill" : "server.rack")
+                        .font(.title2)
+                        .foregroundStyle(isCurrent ? .green : .secondary)
+                        .frame(width: 32)
+    
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(server.serverName.isEmpty ? "Server" : server.serverName)
+                                .font(.headline)
+                            if isCurrent {
+                                Text("ACTIVE")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 2)
+                                    .background(.green.opacity(0.15), in: Capsule())
+                                    .foregroundStyle(.green)
+                            }
                         }
+                        Text(server.serverURL)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
-                    Text(server.serverURL)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                HStack(spacing: 8) {
-                    if !isCurrent {
-                        Button("Connect") {
-                            Task { await session.switchServer(to: server) }
+    
+                    Spacer()
+    
+                    HStack(spacing: 8) {
+                        Button(role: .destructive) {
+                            serverToDelete = server
+                            showDeleteAlert = true
+                        } label: {
+                            Image(systemName: "trash")
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        .tint(.red)
                     }
-                    Button(role: .destructive) {
-                        serverToDelete = server
-                        showDeleteAlert = true
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .tint(.red)
                 }
+                
+                Divider()
+                
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Accounts (\(serverSessions.count))")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
+                        
+                    ForEach(serverSessions) { userSession in
+                        HStack {
+                            Label(userSession.username, systemImage: "person.circle")
+                                .foregroundStyle(session.currentSession?.userID == userSession.userID && isCurrent ? .primary : .secondary)
+                            
+                            if session.currentSession?.userID == userSession.userID && isCurrent {
+                                Text("ACTIVE")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 1)
+                                    .background(.blue.opacity(0.15), in: Capsule())
+                                    .foregroundStyle(.blue)
+                            }
+                            
+                            Spacer()
+                            
+                            if !isCurrent || session.currentSession?.userID != userSession.userID {
+                                Button("Connect") {
+                                    Task { await session.switchUser(to: userSession) }
+                                }
+                                .buttonStyle(.bordered)
+                                .controlSize(.small)
+                            }
+                            
+                            Button(role: .destructive) {
+                                modelContext.delete(userSession)
+                                try? modelContext.save()
+                                if session.currentSession?.userID == userSession.userID {
+                                    Task { await session.logout() }
+                                }
+                            } label: {
+                                Image(systemName: "xmark.circle")
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    
+                    if isCurrent {
+                        Button {
+                            session.addAnotherUser()
+                        } label: {
+                            Label("Add Account", systemImage: "person.badge.plus")
+                                .font(.caption)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 4)
+                        .foregroundStyle(.tint)
+                    }
+                }
+                .padding(.leading, 48)
             }
         }
     }
@@ -637,6 +697,96 @@ struct AboutSettingsView: View {
         case .error: return .red
         case .debug: return .gray
         }
+    }
+}
+
+struct StorageSettingsView: View {
+    @State private var subtitleSize = SubtitleService.shared.getTotalSizeString()
+    @State private var imageCacheSize = ImageCacheManager.shared.getTotalSizeString()
+    @State private var lyricsCacheSize = ByteCountFormatter.string(fromByteCount: Int64(LyricsManager.shared.getCacheSizeInBytes()), countStyle: .file)
+    
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                settingsHeader("Storage", subtitle: "Manage local data and cache")
+                
+                settingsCard {
+                    VStack(alignment: .leading, spacing: 16) {
+                        settingsRowLabel("Subtitles", icon: "captions.bubble")
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text("Downloaded Subtitles")
+                                Text("Subtitles downloaded from remote providers during playback.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(subtitleSize)
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Button("Clear") {
+                                SubtitleService.shared.clearAllSubtitles()
+                                subtitleSize = SubtitleService.shared.getTotalSizeString()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+                
+                settingsCard {
+                    VStack(alignment: .leading, spacing: 16) {
+                        settingsRowLabel("Images", icon: "photo")
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text("Image Cache")
+                                Text("Cached posters, backdrops, and profile images.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(imageCacheSize)
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Button("Clear") {
+                                ImageCacheManager.shared.clearCache()
+                                imageCacheSize = ImageCacheManager.shared.getTotalSizeString()
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+                
+                settingsCard {
+                    VStack(alignment: .leading, spacing: 16) {
+                        settingsRowLabel("Lyrics", icon: "music.mic")
+                        HStack {
+                            VStack(alignment: .leading) {
+                                Text("Lyrics Cache")
+                                Text("Cached lyrics fetched from remote providers.")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            Text(lyricsCacheSize)
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(.secondary)
+                            Button("Clear") {
+                                LyricsManager.shared.clearCache()
+                                lyricsCacheSize = ByteCountFormatter.string(fromByteCount: Int64(LyricsManager.shared.getCacheSizeInBytes()), countStyle: .file)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+                    }
+                }
+                
+                Spacer(minLength: 20)
+            }
+            .padding(.horizontal, 40)
+            .padding(.vertical, 32)
+            .frame(maxWidth: 600)
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 

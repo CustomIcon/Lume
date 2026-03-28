@@ -130,6 +130,7 @@ struct SeriesDetailView: View {
     @State private var isLoadingSeasons = true
     @State private var isLoadingEpisodes = false
     @State private var backdropURL: URL?
+    @State private var logoURL: URL?
 
     var body: some View {
         ScrollView {
@@ -149,9 +150,14 @@ struct SeriesDetailView: View {
                         }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(series.displayName)
-                            .font(.largeTitle)
-                            .fontWeight(.bold)
+                        if let logoURL {
+                            RemoteImageView(url: logoURL, section: .tvShows, cornerRadius: 0, contentMode: .fit)
+                                .frame(maxWidth: 280, maxHeight: 70, alignment: .leading)
+                        } else {
+                            Text(series.displayName)
+                                .font(.largeTitle)
+                                .fontWeight(.bold)
+                        }
 
                         HStack(spacing: 12) {
                             if let year = series.yearText { Text(year) }
@@ -224,6 +230,9 @@ struct SeriesDetailView: View {
             } catch {}
             if let tag = series.backdropImageTags?.first {
                 backdropURL = await session.apiClient.imageURL(itemId: seriesId, imageType: "Backdrop", maxWidth: 1280, tag: tag)
+            }
+            if let logoTag = fullSeries?.imageTags?["Logo"] {
+                logoURL = await session.apiClient.imageURL(itemId: seriesId, imageType: "Logo", maxWidth: 640, tag: logoTag)
             }
             do {
                 let result = try await session.apiClient.getSeasons(seriesId: seriesId)

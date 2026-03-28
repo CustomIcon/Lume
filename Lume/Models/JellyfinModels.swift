@@ -133,6 +133,18 @@ struct BaseItemDtoQueryResult: Codable, Sendable {
     }
 }
 
+struct MediaUrl: Codable, Hashable, Sendable {
+    let url: String?
+    let name: String?
+    let isRemote: Bool?
+    
+    enum CodingKeys: String, CodingKey {
+        case url = "Url"
+        case name = "Name"
+        case isRemote = "IsRemote"
+    }
+}
+
 struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
     let name: String?
     let serverId: String?
@@ -161,8 +173,11 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
     let backdropImageTags: [String]?
     let parentBackdropImageTags: [String]?
     let parentBackdropItemId: String?
+    let parentLogoImageTag: String?
+    let parentLogoItemId: String?
     let userData: UserItemDataDto?
     let mediaSources: [MediaSourceInfo]?
+    let remoteTrailers: [MediaUrl]?
     let mediaStreams: [MediaStream]?
     let premiereDate: String?
     let criticRating: Double?
@@ -188,6 +203,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
     let container: String?
     let sortName: String?
     let primaryImageAspectRatio: Double?
+    let providerIds: [String: String]?
 
     enum CodingKeys: String, CodingKey {
         case name = "Name"
@@ -217,8 +233,11 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
         case backdropImageTags = "BackdropImageTags"
         case parentBackdropImageTags = "ParentBackdropImageTags"
         case parentBackdropItemId = "ParentBackdropItemId"
+        case parentLogoImageTag = "ParentLogoImageTag"
+        case parentLogoItemId = "ParentLogoItemId"
         case userData = "UserData"
         case mediaSources = "MediaSources"
+        case remoteTrailers = "RemoteTrailers"
         case mediaStreams = "MediaStreams"
         case premiereDate = "PremiereDate"
         case criticRating = "CriticRating"
@@ -240,6 +259,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
         case container = "Container"
         case sortName = "SortName"
         case primaryImageAspectRatio = "PrimaryImageAspectRatio"
+        case providerIds = "ProviderIds"
     }
 
     init(name: String? = nil, id: String? = nil, collectionType: String? = nil, type: String? = nil, imageTags: [String: String]? = nil) {
@@ -270,8 +290,11 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
         self.backdropImageTags = nil
         self.parentBackdropImageTags = nil
         self.parentBackdropItemId = nil
+        self.parentLogoImageTag = nil
+        self.parentLogoItemId = nil
         self.userData = nil
         self.mediaSources = nil
+        self.remoteTrailers = nil
         self.mediaStreams = nil
         self.premiereDate = nil
         self.criticRating = nil
@@ -293,6 +316,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
         self.container = nil
         self.sortName = nil
         self.primaryImageAspectRatio = nil
+        self.providerIds = nil
     }
 
     static func == (lhs: BaseItemDto, rhs: BaseItemDto) -> Bool {
@@ -327,7 +351,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
     }
 
     var episodeLabel: String? {
-        guard let season = parentIndexNumber, let episode = indexNumber else { return nil }
+        guard type == "Episode", let season = parentIndexNumber, let episode = indexNumber else { return nil }
         return "S\(season):E\(episode)"
     }
 }
@@ -560,3 +584,24 @@ struct PlaybackInfoResponse: Codable, Sendable {
     }
 }
 
+struct RemoteSubtitleInfo: Codable, Identifiable, Sendable {
+    let id: String?
+    let name: String?
+    let language: String?
+    let format: String?
+    let downloadUrl: String?
+    let providerName: String?
+    let rating: Double?
+    let downloadCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case id = "Id"
+        case name = "Name"
+        case language = "Language"
+        case format = "Format"
+        case downloadUrl = "DownloadUrl"
+        case providerName = "ProviderName"
+        case rating = "Rating"
+        case downloadCount = "DownloadCount"
+    }
+}

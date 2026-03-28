@@ -8,7 +8,6 @@ final class DownloadManager: NSObject {
     private var modelContext: ModelContext?
     private var sessionAndDelegate: (URLSession, DownloadDelegate)?
     
-    // Track active downloads and tasks in memory
     private(set) var activeDownloads: [String: DownloadProgress] = [:]
     private var activeTasks: [String: URLSessionDownloadTask] = [:]
     
@@ -66,7 +65,6 @@ final class DownloadManager: NSObject {
             modelContext?.insert(downloadedItem)
             try? modelContext?.save()
             
-            // Download poster
             Task {
                 await downloadPosterImage(for: item, apiClient: apiClient)
                 if item.type == "Episode", let seriesId = item.seriesId {
@@ -116,7 +114,6 @@ final class DownloadManager: NSObject {
     }
     
     private func downloadSeriesPosterImage(seriesId: String, apiClient: JellyfinAPIClient) async {
-        // We only download it if we don't already have any item for this series that has it
         let descriptor = FetchDescriptor<DownloadedItem>(predicate: #Predicate { $0.seriesId == seriesId && $0.localSeriesImagePath != nil })
         let items = try? modelContext?.fetch(descriptor)
         if !(items?.isEmpty ?? true) { return }
@@ -129,7 +126,6 @@ final class DownloadManager: NSObject {
             let destination = downloadsFolder.appendingPathComponent(fileName)
             try data.write(to: destination)
             
-            // Apply it to all items of this series
             let allBySeries = FetchDescriptor<DownloadedItem>(predicate: #Predicate { $0.seriesId == seriesId })
             if let all = try? modelContext?.fetch(allBySeries) {
                 for it in all {

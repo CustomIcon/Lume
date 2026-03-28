@@ -77,6 +77,10 @@ struct LumeApp: App {
         Settings {
             SettingsView()
                 .environment(sessionManager)
+                .modelContainer(sharedModelContainer)
+                .task {
+                    await sessionManager.setup(modelContext: sharedModelContainer.mainContext)
+                }
         }
     }
 }

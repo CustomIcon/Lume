@@ -13,53 +13,58 @@ struct MainAppView: View {
     @State private var selectedSidebarItem: SidebarItem?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var isRefreshing = false
+    @AppStorage("enableAnimations") private var enableAnimations = true
 
     var body: some View {
         ZStack(alignment: .bottom) {
             NavigationSplitView(columnVisibility: $columnVisibility) {
                 sidebar
             } detail: {
-                if selectedSidebarItem == .settings {
-                    SettingsView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                        .background(.ultraThinMaterial)
-                } else {
-                    NavigationStack {
-                        detailContent
-                            .navigationDestination(for: BaseItemDto.self) { item in
-                                if item.type == "Series" {
-                                    SeriesDetailView(series: item)
-                                } else if item.type == "MusicAlbum" {
-                                    AlbumDetailView(album: item)
-                                } else {
-                                    ItemDetailView(item: item)
+                Group {
+                    if selectedSidebarItem == .settings {
+                        SettingsView()
+                            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                            .background(.ultraThinMaterial)
+                    } else {
+                        NavigationStack {
+                            detailContent
+                                .navigationDestination(for: BaseItemDto.self) { item in
+                                    if item.type == "Series" {
+                                        SeriesDetailView(series: item)
+                                    } else if item.type == "MusicAlbum" {
+                                        AlbumDetailView(album: item)
+                                    } else if item.type == "MusicArtist" || item.type == "Playlist" || item.type == "MusicGenre" {
+                                        MusicCollectionDetailView(collection: item)
+                                    } else if item.type == "Audio" {
+                                        ItemDetailView(item: item)
+                                    } else {
+                                        ItemDetailView(item: item)
+                                    }
                                 }
-                            }
-                            .navigationDestination(for: String.self) { seriesId in
-                                SeriesDownloadsDetailView(seriesId: seriesId)
-                            }
+                                .navigationDestination(for: String.self) { seriesId in
+                                    SeriesDownloadsDetailView(seriesId: seriesId)
+                                }
+                        }
+                        .scrollContentBackground(.hidden)
+                        .background(.ultraThinMaterial)
+                        .toolbarBackground(.hidden, for: .windowToolbar)
+                        .toolbarBackground(.hidden, for: .automatic)
                     }
-                    .scrollContentBackground(.hidden)
-                    .background(.ultraThinMaterial)
-                    .toolbarBackground(.hidden, for: .windowToolbar)
-                    .toolbarBackground(.hidden, for: .automatic)
                 }
-            }
-            .toolbarBackground(.hidden, for: .windowToolbar)
-            .toolbarBackground(.hidden, for: .automatic)
-            .background(
-                LinearGradient(
-                    colors: [
-                        ThemeManager.shared.currentFlavor.accentColor.opacity(0.15),
-                        ThemeManager.shared.currentFlavor.backgroundColor,
-                        ThemeManager.shared.currentFlavor.backgroundColor,
-                        ThemeManager.shared.currentFlavor.accentColor.opacity(0.05)
-                    ],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
+                .background(
+                    LinearGradient(
+                        colors: [
+                            ThemeManager.shared.currentFlavor.accentColor.opacity(0.15),
+                            ThemeManager.shared.currentFlavor.backgroundColor,
+                            ThemeManager.shared.currentFlavor.backgroundColor,
+                            ThemeManager.shared.currentFlavor.accentColor.opacity(0.05)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
                 )
-                .ignoresSafeArea()
-            )
+                .animation(enableAnimations ? .spring(response: 0.35, dampingFraction: 0.85) : nil, value: selectedSidebarItem)
+            }
             .padding(.bottom, (session.activeVideoItem == nil && session.activeBookItem == nil) ? 0 : 0) // Fixed padding
             
             if let activeVideo = session.activeVideoItem {
@@ -169,7 +174,11 @@ struct MainAppView: View {
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .background(.ultraThinMaterial)
+        .background {
+            Rectangle()
+                .fill(.ultraThinMaterial)
+                .ignoresSafeArea(.container, edges: .top)
+        }
         .toolbarBackground(.hidden)
         .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 300)
         .navigationTitle("Lume")
@@ -181,18 +190,22 @@ struct MainAppView: View {
 
     @ViewBuilder
     private var detailContent: some View {
-        switch selectedSidebarItem {
-        case .home, .none:
-            HomeView()
-        case .search:
-            SearchView()
-        case .downloads:
-            DownloadsView()
-        case .settings:
-            SettingsView()
-        case .library(let library):
-            libraryView(for: library)
+        ZStack {
+            switch selectedSidebarItem {
+            case .home, .none:
+                HomeView()
+            case .search:
+                SearchView()
+            case .downloads:
+                DownloadsView()
+            case .settings:
+                SettingsView()
+            case .library(let library):
+                libraryView(for: library)
+            }
         }
+        .id(selectedSidebarItem)
+        .transition(enableAnimations ? .asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.98)), removal: .opacity) : .identity)
     }
 
     @ViewBuilder

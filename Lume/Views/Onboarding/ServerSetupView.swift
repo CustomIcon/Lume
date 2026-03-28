@@ -79,6 +79,16 @@ struct ServerSetupView: View {
             .frame(maxWidth: 400)
 
             Spacer()
+                .frame(height: 24)
+
+            Button("Cancel") {
+                session.cancelAddition()
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .font(.callout)
+
+            Spacer()
         }
         .padding(40)
         .frame(minWidth: 500, minHeight: 400)

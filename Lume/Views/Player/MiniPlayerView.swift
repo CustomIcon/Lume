@@ -5,6 +5,7 @@ struct MiniPlayerView: View {
     @Bindable private var playerManager = MusicPlayerManager.shared
     @State private var currentAlbumURL: URL?
     @State private var showQueue = false
+    @State private var showLyrics = false
 
     var body: some View {
         if let current = playerManager.currentSong {
@@ -38,7 +39,7 @@ struct MiniPlayerView: View {
                     Button(action: { playerManager.stop() }) {
                         Image(systemName: "xmark.circle.fill")
                             .font(.title3)
-                            .foregroundStyle(.white.opacity(0.6))
+                            .foregroundStyle(.primary.opacity(0.6))
                             .padding(8)
                     }
                     .buttonStyle(.plain)
@@ -69,24 +70,33 @@ struct MiniPlayerView: View {
                     }
                     
                     LiquidSlider(
-                        value: Binding(
-                            get: { playerManager.progress },
-                            set: { playerManager.seek(to: $0) }
-                        ), 
-                        range: 0...(playerManager.duration > 0 ? playerManager.duration : 1)
+                        value: $playerManager.progress,
+                        range: 0...(playerManager.duration > 0 ? playerManager.duration : 1),
+                        onEditingChanged: { scrubbing in
+                            if scrubbing {
+                                playerManager.isScrubbing = true
+                            } else {
+                                // Capture the current progress value right now —
+                                // the slider already wrote it via the binding
+                                let seekTarget = playerManager.progress
+                                playerManager.seek(to: seekTarget)
+                            }
+                        }
                     )
                     .frame(height: 12)
                     
                     HStack {
                         Text(formatTime(playerManager.progress))
+                            .frame(width: 40, alignment: .leading)
                         Spacer()
                         Text(formatTime(playerManager.duration))
+                            .frame(width: 40, alignment: .trailing)
                     }
-                    .font(.system(size: 9).monospacedDigit())
+                    .font(.system(size: 10, weight: .medium).monospacedDigit())
                     .foregroundStyle(.secondary)
                     
                     // Secondary Controls: Shuffle, Repeat, Queue
-                    HStack(spacing: 20) {
+                    HStack(spacing: 16) {
                         Button { playerManager.isShuffled.toggle() } label: {
                             Image(systemName: "shuffle")
                                 .foregroundStyle(playerManager.isShuffled ? ThemeManager.shared.currentFlavor.accentColor : .secondary)
@@ -106,6 +116,17 @@ struct MiniPlayerView: View {
                         }
                         .buttonStyle(.plain)
                         .help(playerManager.repeatMode == .one ? "Repeat One" : (playerManager.repeatMode == .all ? "Repeat All" : "Repeat Off"))
+                        
+                        Button { showLyrics.toggle() } label: {
+                            Image(systemName: "quote.bubble.fill")
+                                .foregroundStyle(showLyrics ? ThemeManager.shared.currentFlavor.accentColor : .secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Lyrics")
+                        .popover(isPresented: $showLyrics) {
+                            LyricsView(song: current)
+                                .frame(width: 300, height: 450)
+                        }
 
                         Button { showQueue.toggle() } label: {
                             Image(systemName: "list.bullet")
@@ -135,9 +156,10 @@ struct MiniPlayerView: View {
     }
 
     private func formatTime(_ seconds: Double) -> String {
-        guard !seconds.isNaN else { return "0:00" }
-        let m = Int(seconds) / 60
-        let s = Int(seconds) % 60
+        guard !seconds.isNaN && !seconds.isInfinite else { return "0:00" }
+        let total = Int(seconds)
+        let m = total / 60
+        let s = total % 60
         return String(format: "%d:%02d", m, s)
     }
 }
@@ -196,5 +218,81 @@ struct QueueView: View {
             .listStyle(.plain)
         }
         .background(.ultraThinMaterial)
+    }
+}
+
+struct LyricsView: View {
+    let song: BaseItemDto
+    @State private var lyricsLines: [String] = []
+    @State private var isLoading = true
+    @State private var hasLyrics = false
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("Lyrics")
+                    .font(.headline)
+                Spacer()
+                if hasLyrics {
+                    Text(song.artists?.first ?? song.albumArtist ?? "")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 16)
+            .padding(.bottom, 8)
+            
+            Divider()
+            
+            if isLoading {
+                ProgressView("Searching for lyrics...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if hasLyrics {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(lyricsLines.enumerated()), id: \.offset) { index, line in
+                            let isEmpty = line.trimmingCharacters(in: .whitespaces).isEmpty
+                            
+                            if isEmpty {
+                                Spacer().frame(height: 12)
+                            } else {
+                                Text(line)
+                                    .font(.system(size: 16, weight: .medium))
+                                    .multilineTextAlignment(.leading)
+                                    .foregroundStyle(.primary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 24)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 24)
+                }
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "music.mic")
+                        .font(.largeTitle)
+                        .foregroundStyle(.secondary)
+                    Text("No lyrics found")
+                        .font(.headline)
+                    Text("We couldn't find lyrics for this track.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: song.id) {
+            isLoading = true
+            let result = await LyricsManager.shared.getLyrics(songId: song.id ?? UUID().uuidString, title: song.name, artist: song.artists?.first ?? song.albumArtist)
+            if let result = result {
+                lyricsLines = result.components(separatedBy: "\n")
+                hasLyrics = true
+            } else {
+                lyricsLines = []
+                hasLyrics = false
+            }
+            isLoading = false
+        }
     }
 }

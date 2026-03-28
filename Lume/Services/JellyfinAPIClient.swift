@@ -98,12 +98,25 @@ actor JellyfinAPIClient {
     }
 
     private func buildURL(path: String, queryItems: [URLQueryItem]? = nil) throws -> URL {
-        guard var components = URLComponents(string: "\(baseURL)\(path)") else {
+        guard let base = URL(string: baseURL + "/") else {
             throw APIError.invalidURL
         }
-        if let queryItems, !queryItems.isEmpty {
-            components.queryItems = queryItems
+        
+        let urlWithPath = base.appending(path: path.trimmingCharacters(in: CharacterSet(charactersIn: "/")))
+        guard var components = URLComponents(url: urlWithPath, resolvingAgainstBaseURL: false) else {
+            throw APIError.invalidURL
         }
+        
+        var allQueryItems = (queryItems ?? [])
+        if let token = accessToken {
+            allQueryItems.append(URLQueryItem(name: "Token", value: token))
+            allQueryItems.append(URLQueryItem(name: "api_key", value: token))
+        }
+        
+        if !allQueryItems.isEmpty {
+            components.queryItems = allQueryItems
+        }
+        
         guard let url = components.url else {
             throw APIError.invalidURL
         }
@@ -257,6 +270,7 @@ actor JellyfinAPIClient {
         genres: [String]? = nil,
         years: [Int]? = nil,
         personIds: String? = nil,
+        artistIds: [String]? = nil,
         studioIds: String? = nil,
         ids: [String]? = nil,
         isPlayed: Bool? = nil,
@@ -283,6 +297,7 @@ actor JellyfinAPIClient {
         if let genres { queryItems.append(URLQueryItem(name: "Genres", value: genres.joined(separator: "|"))) }
         if let years { queryItems.append(URLQueryItem(name: "Years", value: years.map(String.init).joined(separator: ","))) }
         if let personIds { queryItems.append(URLQueryItem(name: "PersonIds", value: personIds)) }
+        if let artistIds { queryItems.append(URLQueryItem(name: "ArtistIds", value: artistIds.joined(separator: ","))) }
         if let studioIds { queryItems.append(URLQueryItem(name: "StudioIds", value: studioIds)) }
         if let ids { queryItems.append(URLQueryItem(name: "Ids", value: ids.joined(separator: ","))) }
         if let isPlayed { queryItems.append(URLQueryItem(name: "IsPlayed", value: String(isPlayed))) }
@@ -300,7 +315,7 @@ actor JellyfinAPIClient {
     func getItem(itemId: String) async throws -> BaseItemDto {
         guard let userId else { throw APIError.unauthorized }
         let queryItems = [
-            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Overview,People,Genres,Studios,CommunityRating,OfficialRating,MediaSources,MediaStreams,ExternalUrls,ProviderIds")
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Overview,People,Genres,Studios,CommunityRating,OfficialRating,MediaSources,MediaStreams,ExternalUrls,ProviderIds,RemoteTrailers")
         ]
         let request = try buildRequest(path: "/Users/\(userId)/Items/\(itemId)", queryItems: queryItems)
         let data = try await executeData(request)
@@ -345,7 +360,7 @@ actor JellyfinAPIClient {
         var queryItems = [
             URLQueryItem(name: "UserId", value: userId),
             URLQueryItem(name: "Limit", value: String(limit)),
-            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Overview,MediaSources")
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Overview,MediaSources,SeriesId,SeriesName,ParentId,Type,ImageTags,ParentBackdropImageTags,ParentBackdropItemId,ParentLogoImageTag,ParentLogoItemId,RemoteTrailers")
         ]
         if let parentId {
             queryItems.append(URLQueryItem(name: "ParentId", value: parentId))
@@ -404,6 +419,37 @@ actor JellyfinAPIClient {
         return try await MainActor.run { try JSONDecoder().decode(BaseItemDtoQueryResult.self, from: data) }
     }
 
+    func getAlbumArtists(parentId: String? = nil, limit: Int? = nil, startIndex: Int? = nil, sortBy: [String]? = nil, sortOrder: String? = nil) async throws -> BaseItemDtoQueryResult {
+        guard let userId else { throw APIError.unauthorized }
+        var queryItems = [
+            URLQueryItem(name: "UserId", value: userId),
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,SortName")
+        ]
+        if let parentId { queryItems.append(URLQueryItem(name: "ParentId", value: parentId)) }
+        if let limit { queryItems.append(URLQueryItem(name: "Limit", value: String(limit))) }
+        if let startIndex { queryItems.append(URLQueryItem(name: "StartIndex", value: String(startIndex))) }
+        if let sortBy { queryItems.append(URLQueryItem(name: "SortBy", value: sortBy.joined(separator: ","))) }
+        if let sortOrder { queryItems.append(URLQueryItem(name: "SortOrder", value: sortOrder)) }
+        let request = try buildRequest(path: "/Artists/AlbumArtists", queryItems: queryItems)
+        let data = try await executeData(request)
+        return try await MainActor.run { try JSONDecoder().decode(BaseItemDtoQueryResult.self, from: data) }
+    }
+
+    func getMusicGenres(parentId: String? = nil, sortBy: [String]? = nil, sortOrder: String? = nil) async throws -> BaseItemDtoQueryResult {
+        guard let userId else { throw APIError.unauthorized }
+        var queryItems = [
+            URLQueryItem(name: "UserId", value: userId),
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,SortName,ImageTags"),
+            URLQueryItem(name: "Recursive", value: "true")
+        ]
+        if let parentId { queryItems.append(URLQueryItem(name: "ParentId", value: parentId)) }
+        if let sortBy { queryItems.append(URLQueryItem(name: "SortBy", value: sortBy.joined(separator: ","))) }
+        if let sortOrder { queryItems.append(URLQueryItem(name: "SortOrder", value: sortOrder)) }
+        let request = try buildRequest(path: "/MusicGenres", queryItems: queryItems)
+        let data = try await executeData(request)
+        return try await MainActor.run { try JSONDecoder().decode(BaseItemDtoQueryResult.self, from: data) }
+    }
+
     func getAlbums(parentId: String? = nil, artistId: String? = nil, limit: Int? = nil, startIndex: Int? = nil, sortBy: [String]? = nil, sortOrder: String? = nil) async throws -> BaseItemDtoQueryResult {
         guard let userId else { throw APIError.unauthorized }
         var queryItems = [
@@ -430,11 +476,23 @@ actor JellyfinAPIClient {
             URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,MediaSources,Artists,AlbumArtist")
         ]
         if let parentId { queryItems.append(URLQueryItem(name: "ParentId", value: parentId)) }
-        if let albumId { queryItems.append(URLQueryItem(name: "ParentId", value: albumId)) }
+        if let albumId { queryItems.append(URLQueryItem(name: "AlbumIds", value: albumId)) }
         if let limit { queryItems.append(URLQueryItem(name: "Limit", value: String(limit))) }
         if let sortBy { queryItems.append(URLQueryItem(name: "SortBy", value: sortBy.joined(separator: ","))) }
         if let sortOrder { queryItems.append(URLQueryItem(name: "SortOrder", value: sortOrder)) }
         let request = try buildRequest(path: "/Users/\(userId)/Items", queryItems: queryItems)
+        let data = try await executeData(request)
+        return try await MainActor.run { try JSONDecoder().decode(BaseItemDtoQueryResult.self, from: data) }
+    }
+
+    func getInstantMix(itemId: String, limit: Int = 50) async throws -> BaseItemDtoQueryResult {
+        guard let userId else { throw APIError.unauthorized }
+        let queryItems = [
+            URLQueryItem(name: "UserId", value: userId),
+            URLQueryItem(name: "Limit", value: String(limit)),
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,Overview,MediaSources,Artists,AlbumArtist")
+        ]
+        let request = try buildRequest(path: "/Items/\(itemId)/InstantMix", queryItems: queryItems)
         let data = try await executeData(request)
         return try await MainActor.run { try JSONDecoder().decode(BaseItemDtoQueryResult.self, from: data) }
     }
@@ -539,6 +597,13 @@ actor JellyfinAPIClient {
         let request = try buildRequest(method: "DELETE", path: "/Users/\(userId)/PlayedItems/\(itemId)")
         let data = try await executeData(request)
         return try await MainActor.run { try JSONDecoder().decode(UserItemDataDto.self, from: data) }
+    }
+
+    func getLocalTrailers(itemId: String) async throws -> [BaseItemDto] {
+        guard let userId else { throw APIError.unauthorized }
+        let request = try buildRequest(path: "/Users/\(userId)/Items/\(itemId)/LocalTrailers")
+        let data = try await executeData(request)
+        return try await MainActor.run { try JSONDecoder().decode([BaseItemDto].self, from: data) }
     }
 
     func imageURL(itemId: String, imageType: String = "Primary", maxWidth: Int? = nil, maxHeight: Int? = nil, tag: String? = nil) async -> URL? {
@@ -677,6 +742,40 @@ actor JellyfinAPIClient {
         let request = try buildRequest(path: "/Users/\(userId)/Items", queryItems: queryItems)
         let data = try await executeData(request)
         return try await MainActor.run { try JSONDecoder().decode(BaseItemDtoQueryResult.self, from: data) }
+    }
+
+    func getPlaylists(limit: Int? = nil, startIndex: Int = 0) async throws -> BaseItemDtoQueryResult {
+        guard let userId else { throw APIError.unauthorized }
+        var queryItems = [
+            URLQueryItem(name: "SortBy", value: "SortName"),
+            URLQueryItem(name: "SortOrder", value: "Ascending"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Playlist"),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,SortName,CanDelete"),
+            URLQueryItem(name: "StartIndex", value: String(startIndex)),
+            URLQueryItem(name: "MediaTypes", value: "Audio")
+        ]
+        if let limit { queryItems.append(URLQueryItem(name: "Limit", value: String(limit))) }
+        let request = try buildRequest(path: "/Users/\(userId)/Items", queryItems: queryItems)
+        let data = try await executeData(request)
+        return try await MainActor.run { try JSONDecoder().decode(BaseItemDtoQueryResult.self, from: data) }
+    }
+
+    func searchRemoteSubtitles(itemId: String, language: String? = nil) async throws -> [RemoteSubtitleInfo] {
+        var queryItems: [URLQueryItem] = []
+        if let language {
+            queryItems.append(URLQueryItem(name: "Language", value: language))
+        }
+        let request = try buildRequest(path: "/Items/\(itemId)/RemoteSubtitles/SearchResults", queryItems: queryItems)
+        let data = try await executeData(request)
+        return try await MainActor.run { try JSONDecoder().decode([RemoteSubtitleInfo].self, from: data) }
+    }
+
+    func downloadRemoteSubtitle(itemId: String, id: String) async throws -> Data {
+        // This POST endpoint on Jellyfin usually downloads to the server, 
+        // but it also returns the data if we just want to save it locally.
+        let request = try buildRequest(method: "POST", path: "/Items/\(itemId)/RemoteSubtitles/Download/\(id)")
+        return try await executeData(request)
     }
 }
 

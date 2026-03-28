@@ -74,7 +74,6 @@ class ImageCacheManager {
     }
     
     private func cacheURL(for url: URL, section: CacheSection) -> URL {
-        // Use a simple stable hash of the URL string for the filename
         let input = url.absoluteString
         var hash: UInt64 = 5381
         for byte in input.utf8 {
@@ -105,5 +104,18 @@ class ImageCacheManager {
         formatter.allowedUnits = [.useAll]
         formatter.countStyle = .file
         return formatter.string(fromByteCount: bytes)
+    }
+    
+    func getTotalSizeString() -> String {
+        let total = CacheSection.allCases.reduce(0 as Int64) { total, section in
+            total + getCacheSize(for: section)
+        }
+        return formatSize(total)
+    }
+    
+    func clearCache() {
+        for section in CacheSection.allCases {
+            clearCache(for: section)
+        }
     }
 }

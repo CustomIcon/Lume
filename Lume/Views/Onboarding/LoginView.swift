@@ -83,14 +83,23 @@ struct LoginView: View {
             Spacer()
                 .frame(height: 24)
 
-            Button("Change Server") {
-                Task {
-                    await session.disconnectServer()
+            HStack(spacing: 20) {
+                Button("Cancel") {
+                    session.cancelAddition()
                 }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .font(.callout)
+
+                Button("Change Server") {
+                    Task {
+                        await session.disconnectServer()
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .font(.callout)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .font(.callout)
 
             Spacer()
         }

@@ -33,6 +33,7 @@ enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
     case midnight = "Midnight"
     // Sunset
     case sunset = "Sunset"
+    case oled = "OLED"
 
     var id: String { rawValue }
 
@@ -59,6 +60,7 @@ enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
         case .kanagawa:         return Color(hex: "7e9cd8")
         case .midnight:         return Color(hex: "82aaff")
         case .sunset:           return Color(hex: "ff6e6e")
+        case .oled:             return Color(hex: "007aff")
         }
     }
 
@@ -85,6 +87,7 @@ enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
         case .kanagawa:         return Color(hex: "957fb8")
         case .midnight:         return Color(hex: "c792ea")
         case .sunset:           return Color(hex: "fab387")
+        case .oled:             return Color(hex: "ffffff")
         }
     }
 
@@ -111,6 +114,7 @@ enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
         case .kanagawa:         return Color(hex: "1f1f28")
         case .midnight:         return Color(hex: "0f111a")
         case .sunset:           return Color(hex: "1e1e2e")
+        case .oled:             return Color(hex: "000000")
         }
     }
 
@@ -137,6 +141,7 @@ enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
         case .kanagawa:         return Color(hex: "2a2a37")
         case .midnight:         return Color(hex: "1a1c25")
         case .sunset:           return Color(hex: "28283e")
+        case .oled:             return Color(hex: "111111")
         }
     }
 
@@ -163,6 +168,7 @@ enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
         case .kanagawa:         return Color(hex: "dcd7ba")
         case .midnight:         return Color(hex: "b2ccd6")
         case .sunset:           return Color(hex: "cdd6f4")
+        case .oled:             return Color(hex: "ffffff")
         }
     }
 
@@ -197,6 +203,7 @@ enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
         case .kanagawa: return .kanagawa
         case .midnight: return .midnight
         case .sunset: return .sunset
+        case .oled: return .oled
         }
     }
 }
@@ -213,6 +220,7 @@ enum ThemeCategory: String, CaseIterable, Identifiable {
     case kanagawa = "Kanagawa"
     case midnight = "Midnight"
     case sunset = "Sunset"
+    case oled = "OLED"
 
     var id: String { rawValue }
 
@@ -233,6 +241,7 @@ enum ThemeCategory: String, CaseIterable, Identifiable {
         case .kanagawa: return "water.waves"
         case .midnight: return "moon.stars.fill"
         case .sunset: return "sunset.fill"
+        case .oled: return "tv.fill"
         }
     }
 }
@@ -241,7 +250,7 @@ enum ThemeCategory: String, CaseIterable, Identifiable {
 final class ThemeManager {
     static let shared = ThemeManager()
 
-    var currentFlavor: ThemeFlavor = .mocha {
+    var currentFlavor: ThemeFlavor = .oled {
         didSet {
             UserDefaults.standard.set(currentFlavor.rawValue, forKey: "lume_theme_flavor")
         }

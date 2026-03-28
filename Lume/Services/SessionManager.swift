@@ -126,11 +126,7 @@ final class SessionManager {
 
         guard let modelContext else { throw APIError.invalidResponse }
 
-        // Remove old servers
-        let existingServers = try modelContext.fetch(FetchDescriptor<ServerConfiguration>())
-        for server in existingServers {
-            modelContext.delete(server)
-        }
+        // No longer deleting existing servers for multi-server support
 
         let server = ServerConfiguration(
             serverURL: cleanURL,
@@ -165,11 +161,7 @@ final class SessionManager {
             throw APIError.invalidResponse
         }
 
-        // Deactivate old sessions
-        let existingSessions = try modelContext.fetch(FetchDescriptor<UserSession>())
-        for session in existingSessions {
-            session.isActive = false
-        }
+        // Marking the specific session as active instead of clearing others
 
         let session = UserSession(
             userID: userId,
@@ -181,6 +173,7 @@ final class SessionManager {
         modelContext.insert(session)
         try modelContext.save()
 
+        session.isActive = true 
         self.currentSession = session
         authState = .authenticated
         LumeInfo("Authenticated successfully as \(userName)")
@@ -222,6 +215,39 @@ final class SessionManager {
             LumeError("Failed to fetch session for server switch: \(error.localizedDescription)")
             authState = .needsAuthentication
         }
+    }
+
+    func switchUser(to session: UserSession) async {
+        guard let modelContext else { return }
+        LumeInfo("Switching to user: \(session.username)")
+        
+        // Deactivate other sessions for this specific server? 
+        // Not strictly necessary if we rely on lastLoginDate for startup, but cleaner.
+        let deviceID = session.serverID
+        let descriptor = FetchDescriptor<UserSession>(
+            predicate: #Predicate<UserSession> { $0.serverID == deviceID }
+        )
+        if let sessions = try? modelContext.fetch(descriptor) {
+            for s in sessions { s.isActive = (s.id == session.id) }
+        }
+        
+        self.currentSession = session
+        // Find server configuration
+        let serverDescriptor = FetchDescriptor<ServerConfiguration>(
+            predicate: #Predicate<ServerConfiguration> { $0.deviceID == deviceID }
+        )
+        if let servers = try? modelContext.fetch(serverDescriptor), let server = servers.first {
+            self.currentServer = server
+            await apiClient.configure(
+                baseURL: server.serverURL,
+                accessToken: session.accessToken,
+                userId: session.userID,
+                deviceId: server.deviceID
+            )
+        }
+        
+        authState = .authenticated
+        await loadLibraries()
     }
 
     func initiateQuickConnect() async throws -> QuickConnectResult {
@@ -401,6 +427,24 @@ final class SessionManager {
             return try await apiClient.markUnplayed(itemId: itemId)
         } else {
             return try await apiClient.markPlayed(itemId: itemId)
+        }
+    }
+
+    func addAnotherServer() {
+        LumeInfo("Switching to Add Server mode.")
+        authState = .needsServer
+    }
+
+    func addAnotherUser() {
+        LumeInfo("Switching to Add Account mode.")
+        // Keep currentServer but clear currentSession for the login screen to allow adding another user
+        currentSession = nil
+        authState = .needsAuthentication
+    }
+
+    func cancelAddition() {
+        Task {
+            await loadExistingSession()
         }
     }
 }

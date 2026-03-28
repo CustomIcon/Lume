@@ -18,8 +18,7 @@ final class DownloadedItem {
     var localSeriesImagePath: String?
     var seriesId: String?
     var seasonId: String?
-    
-    // Additional metadata to show in libraries
+
     var seriesName: String?
     var albumName: String?
     var artistName: String?

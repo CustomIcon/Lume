@@ -6,6 +6,7 @@ struct RemoteImageView: View {
     var cornerRadius: CGFloat = 8
     var aspectRatio: CGFloat? = nil
     var title: String? = nil
+    var contentMode: ContentMode = .fill
 
     @State private var image: NSImage? = nil
     @State private var isLoading = false
@@ -15,13 +16,14 @@ struct RemoteImageView: View {
             if let image {
                 Image(nsImage: image)
                     .resizable()
-                    .aspectRatio(contentMode: .fill)
+                    .aspectRatio(contentMode: contentMode)
             } else if isLoading {
                 placeholderView
                     .overlay {
                         ProgressView()
                             .controlSize(.small)
                             .tint(.secondary)
+                            .fixedSize()
                     }
             } else {
                 placeholderView
@@ -168,10 +170,9 @@ struct ItemPosterCard: View {
     let item: BaseItemDto
     let apiClient: JellyfinAPIClient
     var width: CGFloat = 150
-    // If the item is music-related, album art is perfectly square. Otherwise use standard movie poster ratio.
     var imageRatio: CGFloat {
         let t = item.type ?? ""
-        return (t == "MusicAlbum" || t == "Audio" || t == "MusicArtist") ? 1.0 : 1.5
+        return (t == "MusicAlbum" || t == "Audio" || t == "MusicArtist" || t == "Playlist" || t == "MusicGenre") ? 1.0 : 1.5
     }
 
     @State private var imageURL: URL?

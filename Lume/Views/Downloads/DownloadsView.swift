@@ -14,41 +14,41 @@ struct DownloadsView: View {
     ]
     
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if downloads.isEmpty {
-                    ContentUnavailableView(
-                        "No Downloads",
-                        systemImage: "arrow.down.circle",
-                        description: Text("Items you download for offline playback will appear here.")
-                    )
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .padding(.top, 100)
-                } else {
-                    // 1. Movies & Books & Music (Normal)
-                    ForEach(libraries, id: \.name) { library in
-                        if library.type == "Series" {
-                            let tvDownloads = downloads.filter { ($0.type == "Episode" || $0.type == "Series") && $0.seriesId != nil }
-                            if !tvDownloads.isEmpty {
-                                TVSeriesSection(items: tvDownloads)
-                            }
-                        } else {
-                            let libraryItems = downloads.filter { $0.type == library.type }
-                            if !libraryItems.isEmpty {
-                                SectionView(title: library.name, items: libraryItems)
+        Group {
+            if downloads.isEmpty {
+                ContentUnavailableView(
+                    "No Offline Content",
+                    systemImage: "arrow.down.circle",
+                    description: Text("Items you download will appear here for you to enjoy even without an internet connection.")
+                )
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        // 1. Movies & Books & Music (Normal)
+                        ForEach(libraries, id: \.name) { library in
+                            if library.type == "Series" {
+                                let tvDownloads = downloads.filter { ($0.type == "Episode" || $0.type == "Series") && $0.seriesId != nil }
+                                if !tvDownloads.isEmpty {
+                                    TVSeriesSection(items: tvDownloads)
+                                }
+                            } else {
+                                let libraryItems = downloads.filter { $0.type == library.type }
+                                if !libraryItems.isEmpty {
+                                    SectionView(title: library.name, items: libraryItems)
+                                }
                             }
                         }
+                        
+                        let otherItems = downloads.filter { item in
+                            !libraries.map { $0.type }.contains(item.type) && item.type != "Episode"
+                        }
+                        if !otherItems.isEmpty {
+                            SectionView(title: "Other", items: otherItems)
+                        }
                     }
-                    
-                    let otherItems = downloads.filter { item in
-                        !libraries.map { $0.type }.contains(item.type) && item.type != "Episode"
-                    }
-                    if !otherItems.isEmpty {
-                        SectionView(title: "Other", items: otherItems)
-                    }
+                    .padding(.vertical)
                 }
             }
-            .padding(.vertical)
         }
         .navigationTitle("Downloads")
         .toolbarBackground(.hidden)
@@ -172,7 +172,7 @@ private struct DownloadItemCard: View {
                             }
                     }
                 }
-                .aspectRatio(0.66, contentMode: .fit)
+                .aspectRatio(item.type == "Audio" || item.type == "MusicAlbum" ? 1.0 : 0.66, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay {
                     if let active = session.downloadManager.activeDownloads[item.itemId] {
@@ -242,6 +242,8 @@ private struct DownloadItemCard: View {
         let dto = BaseItemDto(name: item.name, id: item.itemId, collectionType: item.collectionType, type: item.type)
         if item.type == "Book" {
             session.activeBookItem = dto
+        } else if item.type == "Audio" {
+            MusicPlayerManager.shared.play(song: dto)
         } else {
             session.activeVideoItem = dto
         }

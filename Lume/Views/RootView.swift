@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @Environment(SessionManager.self) private var session
+    @AppStorage("enableAnimations") private var enableAnimations = true
 
     var body: some View {
         Group {
@@ -26,7 +27,7 @@ struct RootView: View {
                     }
             }
         }
-        .animation(.easeInOut, value: session.authState)
+        .animation(enableAnimations ? .spring(response: 0.4, dampingFraction: 0.8) : nil, value: session.authState)
         .onAppear {
             NSApp.windows.forEach { window in
                 window.titlebarAppearsTransparent = true

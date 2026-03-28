@@ -64,6 +64,9 @@ Lume is built with modern Apple technologies:
 
 This project is partially developed with the help of AI. Such as Documenting functions, VLCKit implemetation and This very README.md file was also generated with the help of AI. other than that, all the code was written by either me or a contributor.
 
+## Roadmap
+Please view [ROADMAP.md](ROADMAP.md) for the roadmap.
+
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.

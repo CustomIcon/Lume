@@ -11,6 +11,7 @@ struct ItemDetailView: View {
     @State private var isLoading = true
     @State private var isFavorite: Bool = false
     @State private var isPlayed: Bool = false
+    @State private var logoURL: URL?
 
     private var displayItem: BaseItemDto {
         fullItem ?? item
@@ -19,7 +20,7 @@ struct ItemDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                if displayItem.type != "Book" {
+                if displayItem.type != "Book" && displayItem.type != "Episode" && displayItem.type != "Audio" && displayItem.type != "MusicAlbum" {
                     // Backdrop
                     ZStack(alignment: .bottomLeading) {
                         RemoteImageView(url: backdropURL, section: CacheSection.from(itemType: displayItem.type), cornerRadius: 0)
@@ -37,7 +38,7 @@ struct ItemDetailView: View {
                         headerContent
                     }
                 } else {
-                    // No backdrop for books, just the content
+                    // No backdrop for books, episodes, or music items, just the content
                     headerContent
                         .padding(.top, 80) // Space for the top bar
                 }
@@ -74,7 +75,7 @@ struct ItemDetailView: View {
                 // Cast & Crew
                 if let people = displayItem.people, !people.isEmpty {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Cast & Crew")
+                        Text(displayItem.type == "Audio" || displayItem.type == "MusicAlbum" || displayItem.type == "MusicVideo" ? "Artists" : "Cast & Crew")
                             .font(.title3)
                             .fontWeight(.bold)
                             .padding(.horizontal)
@@ -158,12 +159,21 @@ struct ItemDetailView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Text(displayItem.displayName)
-                    .font(.largeTitle)
-                    .fontWeight(.bold)
+                if let logoURL {
+                    RemoteImageView(url: logoURL, section: CacheSection.from(itemType: displayItem.type), cornerRadius: 0, contentMode: .fit)
+                        .frame(maxWidth: 280, maxHeight: 70, alignment: .leading)
+                } else {
+                    Text(displayItem.displayName)
+                        .font(.largeTitle)
+                        .fontWeight(.bold)
+                }
 
                 if let seriesName = displayItem.seriesName {
                     Text(seriesName)
+                        .font(.title3)
+                        .foregroundStyle(.secondary)
+                } else if displayItem.type == "Audio" || displayItem.type == "MusicAlbum" || displayItem.type == "MusicVideo", let artist = displayItem.albumArtist ?? displayItem.artists?.first {
+                    Text(artist)
                         .font(.title3)
                         .foregroundStyle(.secondary)
                 }
@@ -217,6 +227,8 @@ struct ItemDetailView: View {
             Button {
                 if displayItem.type == "Book" {
                     session.activeBookItem = displayItem
+                } else if displayItem.type == "Audio" {
+                    MusicPlayerManager.shared.play(song: displayItem)
                 } else {
                     session.activeVideoItem = displayItem
                 }
@@ -235,14 +247,46 @@ struct ItemDetailView: View {
             .buttonStyle(.bordered)
             .controlSize(.large)
 
-            Button {
-                togglePlayed()
-            } label: {
-                Image(systemName: isPlayed ? "eye.fill" : "eye")
-                    .foregroundStyle(isPlayed ? .green : .secondary)
+            if displayItem.type == "Audio" || displayItem.type == "MusicAlbum" || displayItem.type == "MusicVideo" {
+                Button {
+                    Task {
+                        if let albumId = displayItem.albumId ?? displayItem.id {
+                            let result = try? await session.apiClient.getSongs(albumId: albumId)
+                            if let tracks = result?.items?.shuffled(), !tracks.isEmpty {
+                                MusicPlayerManager.shared.play(song: tracks.first!, queue: tracks)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "shuffle")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                
+                Button {
+                    Task {
+                        if let id = displayItem.id {
+                            let mix = try? await session.apiClient.getInstantMix(itemId: id)
+                            if let items = mix?.items, !items.isEmpty {
+                                MusicPlayerManager.shared.play(song: items.first!, queue: items)
+                            }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "wand.and.stars")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+            } else {
+                Button {
+                    togglePlayed()
+                } label: {
+                    Image(systemName: isPlayed ? "eye.fill" : "eye")
+                        .foregroundStyle(isPlayed ? .green : .secondary)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
             }
-            .buttonStyle(.bordered)
-            .controlSize(.large)
             
             downloadButton
         }
@@ -314,6 +358,10 @@ struct ItemDetailView: View {
             backdropURL = await session.apiClient.imageURL(itemId: backdropId, imageType: "Backdrop", maxWidth: 1920, tag: tag)
         }
         posterURL = await session.apiClient.imageURL(itemId: itemId, imageType: "Primary", maxWidth: 300, tag: item.imageTags?["Primary"])
+        
+        if let logoTag = fullItem?.imageTags?["Logo"] {
+            logoURL = await session.apiClient.imageURL(itemId: itemId, imageType: "Logo", maxWidth: 640, tag: logoTag)
+        }
 
         // Load similar
         do {

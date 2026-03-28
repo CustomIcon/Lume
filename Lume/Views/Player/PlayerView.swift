@@ -116,14 +116,16 @@ struct VLCVideoPlayer: NSViewRepresentable {
             if mediaPlayer?.isPlaying ?? false { mediaPlayer?.pause() } else { mediaPlayer?.play() }
         }
 
-        func jumpForward(_ dur: Duration) {
+        func jumpForward(_ dur: Duration) -> Double {
             let next = (mediaPlayer?.time.intValue ?? 0) + Int32(dur.components.seconds * 1000)
             mediaPlayer?.time = VLCTime(int: next)
+            return Double(next) / 1000.0
         }
 
-        func jumpBackward(_ dur: Duration) {
+        func jumpBackward(_ dur: Duration) -> Double {
             let next = (mediaPlayer?.time.intValue ?? 0) - Int32(dur.components.seconds * 1000)
             mediaPlayer?.time = VLCTime(int: next)
+            return Double(next) / 1000.0
         }
 
         func setSeconds(_ seconds: Duration) {
@@ -174,10 +176,17 @@ struct VLCVideoPlayer: NSViewRepresentable {
         }
 
         func setSubtitleScale(_ scale: Int) {
-            // VLCKit often uses a relative size index (0-30 or similar)
-            // or we can try to use textRendererFontSize if available.
-            // Using perform as a safe way to set these values across different VLCKit versions.
-            mediaPlayer?.perform(Selector(("setTextRendererFontSize:")), with: NSNumber(value: scale))
+            // Try KVC first which is more robust than perform()
+            mediaPlayer?.setValue(NSNumber(value: Int32(scale)), forKey: "textRendererFontSize")
+            
+            // Toggling the track off and on forces VLC to reload the text renderer with new settings
+            let current = mediaPlayer?.currentVideoSubTitleIndex ?? -1
+            if current != -1 {
+                mediaPlayer?.currentVideoSubTitleIndex = -1
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    self.mediaPlayer?.currentVideoSubTitleIndex = current
+                }
+            }
         }
 
         var isMuted: Bool {
@@ -192,6 +201,10 @@ struct VLCVideoPlayer: NSViewRepresentable {
         var volume: Int32 {
             get { mediaPlayer?.audio?.volume ?? 0 }
             set { mediaPlayer?.audio?.volume = newValue }
+        }
+
+        func addSubtitle(url: URL) {
+            mediaPlayer?.addPlaybackSlave(url, type: .subtitle, enforce: true)
         }
     }
 }
@@ -219,11 +232,13 @@ final class PlayerViewModel {
     var vlcAudioTracks: [VLCTrackInfo] = []
 
     var progressTimer: Timer?
-    var playSessionId = UUID().uuidString
+    var playSessionId: String?
+    var mediaSourceId: String?
+    var lastReportedTime: Double = -999.0
     var currentPosition: Int64 = 0
     var hasStartedPlaying = false
     var tracksLoaded = false
-    var subtitleScale: Int = UserDefaults.standard.integer(forKey: "subtitleScale") == 0 ? 18 : UserDefaults.standard.integer(forKey: "subtitleScale")
+    var subtitleScale: Int = UserDefaults.standard.integer(forKey: "subtitleScale") == 0 ? 76 : UserDefaults.standard.integer(forKey: "subtitleScale")
 
     var playURL: URL?
 
@@ -234,6 +249,7 @@ final class PlayerViewModel {
         player?.pause()
         player = nil
         hasStartedPlaying = false
+        lastReportedTime = -999.0
         tracksLoaded = false
         isLoading = false
         CursorHideState.shared.unhide()
@@ -264,6 +280,7 @@ struct PlayerView: View {
     @State private var vm = PlayerViewModel()
     @State private var fullItem: BaseItemDto?
     @State private var errorMessage: String?
+    @State private var showSubtitleSearch = false
 
     private var resolvedItem: BaseItemDto { fullItem ?? item }
 
@@ -310,6 +327,32 @@ struct PlayerView: View {
                         vm.isLoading = false
                         // Load VLC's native track lists once playback starts
                         vm.loadTracksFromVLC()
+                        
+                        // Report playback start if not already reported
+                        if vm.lastReportedTime == -999.0 {
+                            let ticks = Int64(vm.currentPlaybackTime * 10_000_000)
+                            let startInfo = PlaybackStartInfo(
+                                itemId: item.id ?? "",
+                                mediaSourceId: vm.mediaSourceId,
+                                positionTicks: ticks,
+                                playSessionId: vm.playSessionId
+                            )
+                            Task { try? await session.apiClient.reportPlaybackStart(startInfo) }
+                            vm.lastReportedTime = vm.currentPlaybackTime
+                        }
+                    case .paused:
+                        // Report pause
+                        let ticks = Int64(vm.currentPlaybackTime * 10_000_000)
+                        let progressInfo = PlaybackProgressInfo(
+                            itemId: item.id ?? "",
+                            mediaSourceId: vm.mediaSourceId,
+                            positionTicks: ticks,
+                            isPaused: true,
+                            playSessionId: vm.playSessionId
+                        )
+                        Task { try? await session.apiClient.reportPlaybackProgress(progressInfo) }
+                    case .ended:
+                        stopPlayback()
                     case .error:
                         vm.isLoading = false
                         errorMessage = "VLC could not play this media. The server may not support direct play for this format."
@@ -354,7 +397,7 @@ struct PlayerView: View {
                 .opacity(vm.showControls || vm.isLoading ? 1 : 0)
                 .animation(.spring(response: 0.5, dampingFraction: 0.8), value: vm.showControls)
                 .pointerVisibility(
-                    (vm.showControls || vm.isLoading || !vm.hasStartedPlaying)
+                    (vm.showControls || vm.isLoading || !vm.hasStartedPlaying || showSubtitleSearch)
                         ? LumePointerVisibility.visible
                         : LumePointerVisibility.hidden
                 )
@@ -373,6 +416,18 @@ struct PlayerView: View {
                                 .font(.system(size: 12, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.6))
                         }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showSubtitleSearch) {
+            if let itemId = item.id {
+                SubtitleSearchView(itemId: itemId) { url in
+                    vm.vlcProxy.addSubtitle(url: url)
+                    // Re-load tracks so the new one shows up in menu
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        vm.tracksLoaded = false
+                        vm.loadTracksFromVLC()
                     }
                 }
             }
@@ -444,14 +499,16 @@ struct PlayerView: View {
                     let fullURL = base + directURL
                     print("[Lume] Using direct stream: \(fullURL)")
                     vm.playURL = URL(string: fullURL)
-                    vm.playSessionId = info.playSessionId ?? UUID().uuidString
+                    vm.playSessionId = info.playSessionId
+                    vm.mediaSourceId = source.id
                     return
                 }
                 if let transURL = source.transcodingUrl {
                     let fullURL = base + transURL
                     print("[Lume] Using transcode stream: \(fullURL)")
                     vm.playURL = URL(string: fullURL)
-                    vm.playSessionId = info.playSessionId ?? UUID().uuidString
+                    vm.playSessionId = info.playSessionId
+                    vm.mediaSourceId = source.id
                     return
                 }
                 if source.supportsDirectPlay == true {
@@ -465,7 +522,8 @@ struct PlayerView: View {
                         print("[Lume] Using direct play: \(directPlayURL)")
                         vm.playURL = URL(string: directPlayURL)
                     }
-                    vm.playSessionId = info.playSessionId ?? UUID().uuidString
+                    vm.playSessionId = info.playSessionId
+                    vm.mediaSourceId = source.id
                     return
                 }
             }
@@ -475,6 +533,7 @@ struct PlayerView: View {
 
         vm.statusMessage = "Using fallback stream..."
         let sourceId = mediaSourceId ?? itemId
+        vm.mediaSourceId = sourceId
         if item.type == "Channel" || item.type == "TvChannel" {
             vm.playURL = await session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId)
             print("[Lume] Using HLS fallback for channel: \(vm.playURL?.absoluteString ?? "")")
@@ -501,6 +560,21 @@ struct PlayerView: View {
             // Retry loading tracks if not loaded yet (VLC sometimes needs a moment)
             if vm.hasStartedPlaying && !vm.tracksLoaded {
                 vm.loadTracksFromVLC()
+            }
+            
+            // Periodically report progress (every 10 seconds)
+            if vm.hasStartedPlaying && 
+               abs(vm.currentPlaybackTime - vm.lastReportedTime) >= 10.0 {
+                let ticks = Int64(vm.currentPlaybackTime * 10_000_000)
+                let progressInfo = PlaybackProgressInfo(
+                    itemId: item.id ?? "",
+                    mediaSourceId: vm.mediaSourceId,
+                    positionTicks: ticks,
+                    isPaused: false,
+                    playSessionId: vm.playSessionId
+                )
+                Task { try? await session.apiClient.reportPlaybackProgress(progressInfo) }
+                vm.lastReportedTime = vm.currentPlaybackTime
             }
         }
     }
@@ -533,20 +607,49 @@ struct PlayerView: View {
                 }
             }
             Spacer()
-            HStack(spacing: 12) {
                 if vm.vlcAudioTracks.count > 1 {
                     liquidMenu(label: "Audio", icon: "speaker.wave.2") { audioMenu }
                 }
+                
+                HStack(spacing: 4) {
+                    Button { updateSize(min(80, vm.subtitleScale + 2)) } label: {
+                        Image(systemName: "minus")
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(8)
+                            .background(.white.opacity(0.1), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                    
+                    VStack(spacing: 0) {
+                        Image(systemName: "textformat.size")
+                            .font(.system(size: 10))
+                        Text("\(100 - vm.subtitleScale)")
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                    }
+                    .frame(width: 28)
+                    
+                    Button { updateSize(max(8, vm.subtitleScale - 2)) } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .bold))
+                            .padding(8)
+                            .background(.white.opacity(0.1), in: Circle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 4)
+                .padding(.vertical, 4)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
+                
                 liquidMenu(label: "Captions", icon: "captions.bubble") { subtitleMenu }
             }
+            .padding(.horizontal, 30)
+            .padding(.top, 40)
+            .background(
+                LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .top, endPoint: .bottom)
+                    .ignoresSafeArea()
+            )
         }
-        .padding(.horizontal, 30)
-        .padding(.top, 40)
-        .background(
-            LinearGradient(colors: [.black.opacity(0.8), .clear], startPoint: .top, endPoint: .bottom)
-                .ignoresSafeArea()
-        )
-    }
 
     private var bottomLiquidHUD: some View {
         VStack(spacing: 30) {
@@ -581,8 +684,10 @@ struct PlayerView: View {
 
             ZStack {
                 HStack(spacing: 40) {
-                    Button { vm.vlcProxy.jumpBackward(Duration.seconds(10)) } label: {
-                        Image(systemName: "gobackward.10").font(.title2)
+                    Button { vm.currentPlaybackTime = vm.vlcProxy.jumpBackward(Duration.seconds(10)) } label: {
+                        Image(systemName: "gobackward.10")
+                            .font(.title2)
+                            .foregroundStyle(.white)
                     }
                     .buttonStyle(.plain)
 
@@ -594,8 +699,10 @@ struct PlayerView: View {
                     }
                     .buttonStyle(.plain)
 
-                    Button { vm.vlcProxy.jumpForward(Duration.seconds(10)) } label: {
-                        Image(systemName: "goforward.10").font(.title2)
+                    Button { vm.currentPlaybackTime = vm.vlcProxy.jumpForward(Duration.seconds(10)) } label: {
+                        Image(systemName: "goforward.10")
+                            .font(.title2)
+                            .foregroundStyle(.white)
                     }
                     .buttonStyle(.plain)
                 }
@@ -659,6 +766,14 @@ struct PlayerView: View {
             }
         }
 
+        Divider()
+
+        Button {
+            showSubtitleSearch = true
+        } label: {
+            Label("Download Subtitles...", systemImage: "arrow.down.circle")
+        }
+
         if vm.vlcSubtitleTracks.isEmpty {
             Text("No subtitles available")
                 .foregroundStyle(.secondary)
@@ -677,15 +792,6 @@ struct PlayerView: View {
                     }
                 }
             }
-        }
-
-        Divider()
-
-        Menu("Size") {
-            Button("Small") { updateSize(12) }
-            Button("Normal") { updateSize(18) }
-            Button("Large") { updateSize(26) }
-            Button("Extra Large") { updateSize(36) }
         }
     }
 
@@ -706,7 +812,12 @@ struct PlayerView: View {
     private func stopPlayback() {
         guard let itemId = item.id else { return }
         let ticks = Int64(vm.currentPlaybackTime * 10_000_000)
-        let stopInfo = PlaybackStopInfo(itemId: itemId, positionTicks: ticks, playSessionId: vm.playSessionId)
+        let stopInfo = PlaybackStopInfo(
+            itemId: itemId, 
+            mediaSourceId: vm.mediaSourceId, 
+            positionTicks: ticks, 
+            playSessionId: vm.playSessionId
+        )
         Task { try? await session.apiClient.reportPlaybackStopped(stopInfo) }
         vm.cleanup()
         withAnimation { session.activeVideoItem = nil }
@@ -721,11 +832,11 @@ struct PlayerView: View {
     private func handleKeyPress(_ press: KeyPress) -> KeyPress.Result {
         switch press.key {
         case .leftArrow, .init("j"), .init("J"):
-            vm.vlcProxy.jumpBackward(Duration.seconds(10))
+            vm.currentPlaybackTime = vm.vlcProxy.jumpBackward(Duration.seconds(10))
             triggerControls()
             return .handled
         case .rightArrow, .init("l"), .init("L"):
-            vm.vlcProxy.jumpForward(Duration.seconds(10))
+            vm.currentPlaybackTime = vm.vlcProxy.jumpForward(Duration.seconds(10))
             triggerControls()
             return .handled
         case .init("f"), .init("F"):
@@ -759,8 +870,8 @@ struct ModernScrubber: View {
 
     var body: some View {
         GeometryReader { geo in
-            let progress = CGFloat(vm.currentPlaybackTime / max(vm.duration, 1))
-            let bufferProgress = CGFloat(vm.bufferedTime / max(vm.duration, 1))
+            let progress = max(0, min(1, CGFloat(vm.currentPlaybackTime / max(vm.duration, 1))))
+            let bufferProgress = max(0, min(1, CGFloat(vm.bufferedTime / max(vm.duration, 1))))
             let dragLocX = min(max(0, hoverLocation), geo.size.width)
             let hoverTime = Double(dragLocX / geo.size.width) * vm.duration
 

@@ -920,8 +920,7 @@ enum EPUBParser {
 
             let anchor = "chapter-\(idref)"
             var bodyContent = extractBody(from: content)
-            
-            // Rewrite relative paths in HTML attributes (src, href, poster, xlink:href, etc.)
+
             let relativeTo = fullPath
             let attrPatterns = [
                 "src\\s*=\\s*[\"']([^\"']+)[\"']",

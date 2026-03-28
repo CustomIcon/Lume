@@ -18,6 +18,7 @@ final class MusicPlayerManager {
     var progress: Double = 0
     var duration: Double = 0
     var bufferedTime: Double = 0
+    var isScrubbing = false
     var playSessionId: String = UUID().uuidString
     var volume: Float = 1.0 {
         didSet { avPlayer?.volume = volume }
@@ -52,6 +53,8 @@ final class MusicPlayerManager {
         
         self.playSessionId = UUID().uuidString
         self.currentSong = song
+        self.progress = 0
+        self.duration = song.runTimeTicks.flatMap { Double($0) / 10_000_000 } ?? 0
         let itemId = song.id ?? ""
         
         // Stop current
@@ -74,6 +77,13 @@ final class MusicPlayerManager {
             let asset = AVURLAsset(url: url, options: options)
             let playerItem = AVPlayerItem(asset: asset)
             
+            // Initial duration from ticks
+            if let ticks = song.runTimeTicks {
+                await MainActor.run {
+                    self.duration = Double(ticks) / 10_000_000.0
+                }
+            }
+            
             await MainActor.run {
                 let player = AVPlayer(playerItem: playerItem)
                 player.volume = volume
@@ -83,7 +93,13 @@ final class MusicPlayerManager {
                 playerItem.publisher(for: \.status)
                     .sink { [weak self] status in
                         if status == .readyToPlay {
-                            self?.duration = playerItem.duration.seconds
+                            let itemDuration = playerItem.duration.seconds
+                            if !itemDuration.isNaN && itemDuration > 0 {
+                                // Only override if we don't have a reliable duration from the server
+                                if self?.currentSong?.runTimeTicks == nil || (self?.duration ?? 0) == 0 {
+                                    self?.duration = itemDuration
+                                }
+                            }
                             self?.updateNowPlayingInfo()
                             // Report Start
                             let ticks = Int64(max(0, self?.progress ?? 0) * 10_000_000)
@@ -105,12 +121,24 @@ final class MusicPlayerManager {
                 var lastReportedTime: Int = -1
                 
                 timeObserver = player.addPeriodicTimeObserver(forInterval: CMTime(seconds: 0.5, preferredTimescale: 600), queue: .main) { [weak self] time in
-                    guard let self = self else { return }
-                    self.progress = time.seconds
-                    let dur = playerItem.duration.seconds
-                    if !dur.isNaN {
-                        self.duration = dur
+                    guard let self = self, !self.isScrubbing else { return }
+                    
+                    // Update duration more robustly from the player item
+                    // ONLY if we don't have runTimeTicks or a previously cached valid duration!
+                    // AVPlayer duration estimates often shrink incorrectly after making HTTP seek requests.
+                    if self.currentSong?.runTimeTicks == nil && self.duration == 0 {
+                        let itemDuration = playerItem.duration
+                        if itemDuration.isNumeric {
+                            let dur = itemDuration.seconds
+                            if dur > 0 {
+                                 self.duration = dur
+                            }
+                        }
                     }
+                    
+                    // Clamp progress strictly to [0, duration]
+                    let reportedTime = time.seconds
+                    self.progress = max(0, min(reportedTime, self.duration))
                     self.updateNowPlayingPlaybackInfo()
                     
                     if let currentItem = self.avPlayer?.currentItem {
@@ -195,7 +223,11 @@ final class MusicPlayerManager {
         
         guard let current = currentSong,
               let idx = queue.firstIndex(where: { $0.id == current.id }) else {
-            if !queue.isEmpty { play(song: isShuffled ? queue.randomElement()! : queue[0]) }
+            if !queue.isEmpty {
+                play(song: isShuffled ? queue.randomElement()! : queue[0])
+            } else {
+                stop()
+            }
             return
         }
         
@@ -228,8 +260,27 @@ final class MusicPlayerManager {
     }
     
     func seek(to seconds: Double) {
-        avPlayer?.seek(to: CMTime(seconds: seconds, preferredTimescale: 600))
-        progress = seconds
+        let clampedSeconds = max(0, min(seconds, duration > 0 ? duration : .greatestFiniteMagnitude))
+        let targetTime = CMTime(seconds: clampedSeconds, preferredTimescale: 1000)
+        
+        // Lock out the periodic time observer during the entire seek
+        isScrubbing = true
+        progress = clampedSeconds
+        
+        avPlayer?.seek(to: targetTime, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+            guard let self = self else { return }
+            DispatchQueue.main.async {
+                // Re-stamp progress to our target so the time observer can't snap it back
+                self.progress = clampedSeconds
+                self.updateNowPlayingPlaybackInfo()
+                
+                // Give AVPlayer a beat to settle its internal clock before
+                // we let the periodic observer take over again
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    self.isScrubbing = false
+                }
+            }
+        }
     }
     
     private func setupRemoteCommandCenter() {
