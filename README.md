@@ -2,7 +2,7 @@
 
 A modern, native Jellyfin client for macOS, designed with a focus on aesthetics, performance, and the premium Mac experience.
 
-![Home Screen](screenshots/Home.png)
+![Home Screen](screenshots/Home.jpg)
 
 ## 🌟 Features
 
@@ -16,30 +16,30 @@ A modern, native Jellyfin client for macOS, designed with a focus on aesthetics,
     *   **Live TV**: Access your IPTV channels and live recordings directly.
     *   **Books**: A built-in reader for your e-book collections.
 *   **Advanced Subtitle System**: Native support for embedded and external `.srt` files, synchronized with Jellyfin, including customizable font sizes and automatic language matching.
-*   **Quick Connect**: Seamless login experience using **Device Code/QR Login** for secure and effortless server pairing.
-*   **Custom Themes**: Multiple curated flavors (Dark, Light, Slate, Forest, etc.) to customize your experience.
+*   **Quick Connect**: Seamless login experience using **Device Code** for secure and effortless server pairing.
+*   **Themes**: Multiple curated flavors (Dark, Light, Slate, Forest, etc.) to customize your experience.
 
 ## 📸 Screenshots
 
 | Home | Movies |
 | :---: | :---: |
-| ![Home](screenshots/Home.png) | ![Movies](screenshots/Movies.png) |
+| ![Home](screenshots/Home.jpg) | ![Movies](screenshots/Movies.jpg) |
 
 | TV Shows | Music |
 | :---: | :---: |
-| ![Shows](screenshots/Shows.png) | ![Music](screenshots/Music.png) |
+| ![Shows](screenshots/Shows.jpg) | ![Music](screenshots/Music.jpg) |
 
 | Live TV | Books |
 | :---: | :---: |
-| ![LiveTV](screenshots/LiveTV.png) | ![Books](screenshots/Books.png) |
+| ![LiveTV](screenshots/LiveTV.jpg) | ![Books](screenshots/Books.jpg) |
 
 | Video Player | Downloads |
 | :---: | :---: |
-| ![Player](screenshots/Player.png) | ![Downloads](screenshots/Downloads.png) |
+| ![Player](screenshots/Player.jpg) | ![Downloads](screenshots/Downloads.jpg) |
 
 | Settings | Quick Connect |
 | :---: | :---: |
-| ![Settings](screenshots/Settings.png) | ![Onboarding](screenshots/DeviceCodeLogin.png) |
+| ![Settings](screenshots/Settings.jpg) | ![Onboarding](screenshots/DeviceCodeLogin.jpg) |
 
 ## 🚀 Getting Started
 

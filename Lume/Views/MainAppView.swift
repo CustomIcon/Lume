@@ -14,6 +14,7 @@ struct MainAppView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var isRefreshing = false
     @AppStorage("enableAnimations") private var enableAnimations = true
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -65,19 +66,18 @@ struct MainAppView: View {
                 )
                 .animation(enableAnimations ? .spring(response: 0.35, dampingFraction: 0.85) : nil, value: selectedSidebarItem)
             }
-            .padding(.bottom, (session.activeVideoItem == nil && session.activeBookItem == nil) ? 0 : 0) // Fixed padding
-            
-            if let activeVideo = session.activeVideoItem {
-                PlayerView(item: activeVideo)
-                    .ignoresSafeArea()
-                    .zIndex(100)
-            } else if let activeBook = session.activeBookItem {
-                BookReaderView(item: activeBook)
-                    .ignoresSafeArea()
-                    .zIndex(100)
-            }
         }
         .themeContainer()
+        .onChange(of: session.activeVideoItem) { old, newValue in
+            if newValue != nil {
+                openWindow(id: "video-player")
+            }
+        }
+        .onChange(of: session.activeBookItem) { old, newValue in
+            if newValue != nil {
+                openWindow(id: "book-reader")
+            }
+        }
         .onAppear {
             // Apply titlebar transparency immediately
             NSApp.windows.forEach { window in
@@ -92,7 +92,6 @@ struct MainAppView: View {
                 }
             }
         }
-        .toolbar((session.activeVideoItem != nil || session.activeBookItem != nil) ? .hidden : .visible)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Button {

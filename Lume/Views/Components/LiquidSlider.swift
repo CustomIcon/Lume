@@ -45,8 +45,8 @@ struct LiquidSlider: View {
                     .fill(
                         LinearGradient(
                             colors: [
-                                ThemeManager.shared.currentFlavor.accentColor,
-                                ThemeManager.shared.currentFlavor.accentColor.opacity(0.8)
+                                .white,
+                                .white.opacity(0.8)
                             ],
                             startPoint: .leading,
                             endPoint: .trailing
@@ -54,7 +54,7 @@ struct LiquidSlider: View {
                     )
                     .frame(width: displayRatio * usableWidth, height: trackHeight)
                     .padding(.leading, thumbRadius)
-                    .shadow(color: ThemeManager.shared.currentFlavor.accentColor.opacity(0.3), radius: 4)
+                    .shadow(color: .white.opacity(0.35), radius: 4)
                 
                 // Thumb
                 Circle()

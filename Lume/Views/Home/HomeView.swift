@@ -12,7 +12,7 @@ struct HomeView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            LazyVStack(alignment: .leading, spacing: 24) {
                 if isLoading {
                     ProgressView("Loading...")
                         .frame(maxWidth: .infinity, minHeight: 200)
@@ -316,11 +316,11 @@ private struct FeaturedSlideView: View {
                             session.activeVideoItem = item
                         } label: {
                             Label("Play Now", systemImage: "play.fill")
-                                .font(.headline)
-                                .padding(.horizontal, 28)
-                                .padding(.vertical, 14)
-                                .background(ThemeManager.shared.currentFlavor.accentColor, in: RoundedRectangle(cornerRadius: 14))
-                                .foregroundStyle(.white)
+                                 .font(.headline)
+                                 .padding(.horizontal, 28)
+                                 .padding(.vertical, 14)
+                                 .background(.white, in: RoundedRectangle(cornerRadius: 14)) // Always white
+                                 .foregroundStyle(.black) // Always black
                         }
                         .buttonStyle(.plain)
 

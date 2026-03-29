@@ -35,10 +35,15 @@ class ImageCacheManager {
     
     private let fileManager = FileManager.default
     private let cacheDirectory: URL
+    private let memoryCache = NSCache<NSURL, NSImage>()
     
     private init() {
         let urls = fileManager.urls(for: .cachesDirectory, in: .userDomainMask)
         self.cacheDirectory = urls[0].appendingPathComponent("ImageCache")
+        
+        // Configure memory cache
+        memoryCache.countLimit = 100 // Cache up to 100 images in memory
+        memoryCache.totalCostLimit = 100 * 1024 * 1024 // 100MB limit
         
         createDirectoryIfNeeded()
     }
@@ -53,15 +58,25 @@ class ImageCacheManager {
     }
     
     func getCachedImage(for url: URL, section: CacheSection) -> NSImage? {
+        if let memoryImage = memoryCache.object(forKey: url as NSURL) {
+            return memoryImage
+        }
+        
         let fileURL = cacheURL(for: url, section: section)
         if fileManager.fileExists(atPath: fileURL.path),
-           let data = try? Data(contentsOf: fileURL) {
-            return NSImage(data: data)
+           let data = try? Data(contentsOf: fileURL),
+           let image = NSImage(data: data) {
+            memoryCache.setObject(image, forKey: url as NSURL, cost: data.count)
+            return image
         }
         return nil
     }
     
     func cacheImage(_ image: NSImage, for url: URL, section: CacheSection) {
+        // Set in memory
+        memoryCache.setObject(image, forKey: url as NSURL)
+        
+        // Save to disk
         let fileURL = cacheURL(for: url, section: section)
         if let data = image.tiffRepresentation {
             try? data.write(to: fileURL)
@@ -69,6 +84,10 @@ class ImageCacheManager {
     }
     
     func cacheData(_ data: Data, for url: URL, section: CacheSection) {
+        if let image = NSImage(data: data) {
+            memoryCache.setObject(image, forKey: url as NSURL, cost: data.count)
+        }
+        
         let fileURL = cacheURL(for: url, section: section)
         try? data.write(to: fileURL)
     }
@@ -97,6 +116,7 @@ class ImageCacheManager {
         let sectionDir = cacheDirectory.appendingPathComponent(section.rawValue)
         let files = try? fileManager.contentsOfDirectory(at: sectionDir, includingPropertiesForKeys: nil)
         files?.forEach { try? fileManager.removeItem(at: $0) }
+        memoryCache.removeAllObjects()
     }
     
     func formatSize(_ bytes: Int64) -> String {
@@ -117,5 +137,6 @@ class ImageCacheManager {
         for section in CacheSection.allCases {
             clearCache(for: section)
         }
+        memoryCache.removeAllObjects()
     }
 }

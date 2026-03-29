@@ -148,13 +148,15 @@ struct VLCVideoPlayer: NSViewRepresentable {
 
         var currentSubtitleIndex: Int32 {
             get { mediaPlayer?.currentVideoSubTitleIndex ?? -1 }
+            set { mediaPlayer?.currentVideoSubTitleIndex = newValue }
         }
+
+        var videoSize: CGSize { mediaPlayer?.videoSize ?? .zero }
 
         func setSubtitleTrack(_ index: Int32) {
             mediaPlayer?.currentVideoSubTitleIndex = index
         }
 
-        /// Returns the available audio tracks from VLC.
         var audioTracks: [VLCTrackInfo] {
             guard let player = mediaPlayer else { return [] }
             var tracks: [VLCTrackInfo] = []
@@ -213,7 +215,15 @@ struct VLCVideoPlayer: NSViewRepresentable {
 final class PlayerViewModel {
     var player: AVPlayer?
     var vlcProxy = VLCVideoPlayer.Proxy()
-    var isPlaying = false
+    var isPlaying = false {
+        didSet {
+            if isPlaying {
+                SleepPreventer.shared.startPreventingSleep(reason: "Watching media in Lume")
+            } else {
+                SleepPreventer.shared.stopPreventingSleep()
+            }
+        }
+    }
 
     var isLoading = true
     var statusMessage: String = "Finding best stream..."
@@ -233,6 +243,7 @@ final class PlayerViewModel {
     var vlcAudioTracks: [VLCTrackInfo] = []
 
     var progressTimer: Timer?
+    private var cancellables = Set<AnyCancellable>()
     var playSessionId: String?
     var mediaSourceId: String?
     var lastReportedTime: Double = -999.0
@@ -240,7 +251,15 @@ final class PlayerViewModel {
     var hasStartedPlaying = false
     var tracksLoaded = false
     var subtitleScale: Int = UserDefaults.standard.integer(forKey: "subtitleScale") == 0 ? 76 : UserDefaults.standard.integer(forKey: "subtitleScale")
+    var isFullscreen = false
 
+    var volume: Int32 = 100 {
+        didSet {
+            vlcProxy.volume = volume
+        }
+    }
+    var lastVolume: Int32 = 100
+    
     var playURL: URL?
 
     func cleanup() {
@@ -254,6 +273,22 @@ final class PlayerViewModel {
         tracksLoaded = false
         isLoading = false
         CursorHideState.shared.unhide()
+        SleepPreventer.shared.stopPreventingSleep()
+    }
+    
+    func setupFullscreenObserver() {
+        NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)
+            .sink { [weak self] _ in self?.isFullscreen = true }
+            .store(in: &cancellables)
+        
+        NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)
+            .sink { [weak self] _ in self?.isFullscreen = false }
+            .store(in: &cancellables)
+            
+        // Initial state
+        if let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }) {
+            isFullscreen = window.styleMask.contains(.fullScreen)
+        }
     }
 
     /// Load track lists from VLC player once playback has started.
@@ -344,6 +379,7 @@ final class PlayerViewModel {
 
 struct PlayerView: View {
     @Environment(SessionManager.self) private var session
+    @Environment(\.dismissWindow) private var dismissWindow
     let item: BaseItemDto
 
     @FocusState private var isFocused: Bool
@@ -466,7 +502,7 @@ struct PlayerView: View {
                 .opacity(vm.showControls || vm.isLoading ? 1 : 0)
                 .animation(.spring(response: 0.5, dampingFraction: 0.8), value: vm.showControls)
                 .pointerVisibility(
-                    (vm.showControls || vm.isLoading || !vm.hasStartedPlaying || showSubtitleSearch)
+                    (vm.showControls || vm.isLoading || !vm.hasStartedPlaying || showSubtitleSearch || !vm.isFullscreen)
                         ? LumePointerVisibility.visible
                         : LumePointerVisibility.hidden
                 )
@@ -504,6 +540,7 @@ struct PlayerView: View {
         .task { await prepareAndPlay() }
         .onAppear {
             setupTimer()
+            vm.setupFullscreenObserver()
             isFocused = true
         }
         .onDisappear { stopPlayback() }
@@ -686,37 +723,53 @@ struct PlayerView: View {
                     liquidMenu(label: "Audio", icon: "speaker.wave.2") { audioMenu }
                 }
                 
-                HStack(spacing: 4) {
-                    Button { updateSize(min(80, vm.subtitleScale + 2)) } label: {
-                        Image(systemName: "minus")
-                            .font(.system(size: 10, weight: .bold))
-                            .padding(8)
-                            .background(.white.opacity(0.1), in: Circle())
+                if vm.selectedSubtitleIndex != -1 {
+                    HStack(spacing: 4) {
+                        Button { updateSize(min(80, vm.subtitleScale + 2)) } label: {
+                            Image(systemName: "minus")
+                                .font(.system(size: 10, weight: .bold))
+                                .padding(8)
+                                .background(.white.opacity(0.1), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        
+                        VStack(spacing: 0) {
+                            Image(systemName: "textformat.size")
+                                .font(.system(size: 10))
+                            Text("\(100 - vm.subtitleScale)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                        }
+                        .frame(width: 28)
+                        
+                        Button { updateSize(max(8, vm.subtitleScale - 2)) } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 10, weight: .bold))
+                                .padding(8)
+                                .background(.white.opacity(0.1), in: Circle())
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
-                    
-                    VStack(spacing: 0) {
-                        Image(systemName: "textformat.size")
-                            .font(.system(size: 10))
-                        Text("\(100 - vm.subtitleScale)")
-                            .font(.system(size: 11, weight: .bold, design: .monospaced))
-                    }
-                    .frame(width: 28)
-                    
-                    Button { updateSize(max(8, vm.subtitleScale - 2)) } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .bold))
-                            .padding(8)
-                            .background(.white.opacity(0.1), in: Circle())
-                    }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 4)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
+                    .transition(.asymmetric(insertion: .opacity.combined(with: .scale), removal: .opacity.combined(with: .scale)))
                 }
-                .padding(.horizontal, 4)
-                .padding(.vertical, 4)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
                 
                 liquidMenu(label: "Captions", icon: "captions.bubble") { subtitleMenu }
+                
+                Button { toggleFullscreen() } label: {
+                    Image(systemName: vm.isFullscreen ? "arrow.down.right.and.arrow.up.left" : "viewfinder")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(10)
+                }
+                .buttonStyle(.plain)
+                .background(.white.opacity(0.1), in: Circle())
+                .padding(4)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
+                .help(vm.isFullscreen ? "Exit Fullscreen" : "Full Screen")
             }
             .padding(.horizontal, 30)
             .padding(.top, 40)
@@ -785,6 +838,40 @@ struct PlayerView: View {
                 .padding(.vertical, 15)
                 .background(.ultraThinMaterial, in: Capsule())
                 .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
+                
+                HStack {
+                    Spacer()
+                    
+                HStack {
+                    Spacer()
+                    
+                    HStack(spacing: 0) {
+                        Button {
+                            if vm.volume > 0 {
+                                vm.lastVolume = vm.volume
+                                vm.volume = 0
+                            } else {
+                                vm.volume = vm.lastVolume > 0 ? vm.lastVolume : 100
+                            }
+                        } label: {
+                            Image(systemName: vm.volume == 0 ? "speaker.slash.fill" : (vm.volume < 40 ? "speaker.1.fill" : "speaker.3.fill"))
+                                .font(.system(size: 14))
+                                .foregroundStyle(.white)
+                                .frame(width: 32)
+                        }
+                        .buttonStyle(.plain)
+
+                        LiquidSlider(value: Binding(
+                            get: { Double(vm.volume) },
+                            set: { vm.volume = Int32($0) }
+                        ), range: 0...100)
+                        .frame(width: 100)
+                    }
+                    .padding(10)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
+                }
+                .padding(.trailing, 30)
             }
         }
         .padding(.bottom, 60)
@@ -792,6 +879,7 @@ struct PlayerView: View {
             LinearGradient(colors: [.clear, .black.opacity(0.9)], startPoint: .top, endPoint: .bottom)
                 .ignoresSafeArea()
         )
+    }
     }
 
     private func liquidMenu<Content: View>(label: String, icon: String, @ViewBuilder menu: () -> Content) -> some View {
@@ -895,12 +983,34 @@ struct PlayerView: View {
         )
         Task { try? await session.apiClient.reportPlaybackStopped(stopInfo) }
         vm.cleanup()
-        withAnimation { session.activeVideoItem = nil }
+        if session.activeVideoItem?.id == item.id {
+            withAnimation { session.activeVideoItem = nil }
+            dismissWindow()
+        }
     }
 
     private func toggleFullscreen() {
-        if let window = NSApp.keyWindow ?? NSApp.mainWindow ?? NSApp.windows.first(where: { $0.isVisible }) {
-            window.toggleFullScreen(nil)
+        // Robust window lookup strategy
+        let targetWindow = NSApp.windows.first { window in
+            window.isVisible && (window.title.contains("Video Player") || window.title.contains(item.name ?? ""))
+        } ?? NSApp.keyWindow ?? NSApp.mainWindow
+        
+        guard let window = targetWindow else { return }
+        
+        // Ensure the window has the proper flags to enter native macOS fullscreen spaces
+        if !window.collectionBehavior.contains(.fullScreenPrimary) {
+            window.collectionBehavior.insert(.fullScreenPrimary)
+        }
+        
+        // Re-enable the zoom button if it was hidden (requirement for some System Fullscreen behaviors)
+        window.standardWindowButton(.zoomButton)?.isHidden = false
+        
+        // Native macOS Fullscreen transition - this moves the app to its own separate Space/Desktop
+        window.toggleFullScreen(nil)
+        
+        // Manual sync for isFullscreen state
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+            vm.isFullscreen = window.styleMask.contains(.fullScreen)
         }
     }
 
@@ -932,6 +1042,14 @@ struct PlayerView: View {
                 return .handled
             }
             return .ignored
+        case .upArrow:
+            vm.volume = min(200, vm.volume + 5)
+            triggerControls()
+            return .handled
+        case .downArrow:
+            vm.volume = max(0, vm.volume - 5)
+            triggerControls()
+            return .handled
         default:
             return .ignored
         }
@@ -957,9 +1075,9 @@ struct ModernScrubber: View {
                 Capsule().fill(.white.opacity(0.35))
                     .frame(width: geo.size.width * bufferProgress, height: isHovering || vm.isDraggingSlider ? 8 : 4)
 
-                Capsule().fill(ThemeManager.shared.currentFlavor.accentColor)
+                Capsule().fill(.white)
                     .frame(width: geo.size.width * progress, height: isHovering || vm.isDraggingSlider ? 8 : 4)
-                    .shadow(color: ThemeManager.shared.currentFlavor.accentColor.opacity(0.4), radius: 6)
+                    .shadow(color: .white.opacity(0.4), radius: 6)
                     .overlay(alignment: .trailing) {
                         Circle().fill(.white)
                             .frame(width: 16, height: 16)

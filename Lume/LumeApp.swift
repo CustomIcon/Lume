@@ -39,6 +39,34 @@ struct LumeApp: App {
                 }
         }
         .modelContainer(sharedModelContainer)
+
+        Window("Video Player", id: "video-player") {
+            if let activeVideo = sessionManager.activeVideoItem {
+                PlayerView(item: activeVideo)
+                    .id(activeVideo.id)
+                    .environment(sessionManager)
+                    .themeContainer()
+                    .frame(minWidth: 800, minHeight: 450)
+            } else {
+                Color.black
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1280, height: 720)
+
+        Window("Book Reader", id: "book-reader") {
+            if let activeBook = sessionManager.activeBookItem {
+                BookReaderView(item: activeBook)
+                    .id(activeBook.id)
+                    .environment(sessionManager)
+                    .themeContainer()
+                    .frame(minWidth: 400, minHeight: 600)
+            } else {
+                Color.black
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 600, height: 850)
         .commands {
             CommandGroup(replacing: .newItem) {}
 

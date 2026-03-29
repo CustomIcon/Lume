@@ -96,6 +96,8 @@ struct BookReaderView: View {
             }
         }
         .task { await loadBook() }
+        .onAppear { SleepPreventer.shared.startPreventingSleep(reason: "Reading a book in Lume") }
+        .onDisappear { SleepPreventer.shared.stopPreventingSleep() }
     }
 
     private var loadingView: some View {
@@ -174,7 +176,10 @@ struct BookReaderView: View {
         vm.isLoading = false
     }
 
+    @Environment(\.dismissWindow) private var dismissWindow
+
     private func close() {
+        dismissWindow()
         withAnimation { session.activeBookItem = nil }
     }
 }

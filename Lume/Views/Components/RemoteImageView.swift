@@ -10,6 +10,7 @@ struct RemoteImageView: View {
 
     @State private var image: NSImage? = nil
     @State private var isLoading = false
+    @State private var loadTask: Task<Void, Never>? = nil
 
     var body: some View {
         Group {
@@ -31,38 +32,58 @@ struct RemoteImageView: View {
         }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
         .onAppear { loadImage() }
+        .onDisappear { 
+            loadTask?.cancel() 
+            loadTask = nil
+        }
         .onChange(of: url) { _, _ in loadImage() }
     }
 
     private func loadImage() {
+        loadTask?.cancel()
+        
         guard let url else { 
             self.image = nil
             return 
         }
         
-        // 1. Check memory/disk cache via manager
+        // 1. Check memory/disk cache via manager (Fast check, still on main but memory is fast)
         if let cached = ImageCacheManager.shared.getCachedImage(for: url, section: section) {
             self.image = cached
+            self.isLoading = false
             return
         }
         
-        // 2. Fetch from network
+        // 2. Fetch from network or disk if memory failed
         isLoading = true
-        Task {
+        loadTask = Task {
             do {
+                // Check disk again in background to be sure
                 let (data, _) = try await URLSession.shared.data(from: url)
+                
+                // IMPORTANT: Check for cancellation before processing heavy data
+                if Task.isCancelled { return }
+                
                 if let downloadedImage = NSImage(data: data) {
+                    // Cache the data
                     ImageCacheManager.shared.cacheData(data, for: url, section: section)
-                    await MainActor.run {
-                        self.image = downloadedImage
-                        self.isLoading = false
+                    
+                    if !Task.isCancelled {
+                        await MainActor.run {
+                            self.image = downloadedImage
+                            self.isLoading = false
+                        }
                     }
                 } else {
-                    await MainActor.run { self.isLoading = false }
+                    if !Task.isCancelled {
+                        await MainActor.run { self.isLoading = false }
+                    }
                 }
             } catch {
-                await MainActor.run {
-                    self.isLoading = false
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        self.isLoading = false
+                    }
                 }
             }
         }

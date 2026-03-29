@@ -179,7 +179,7 @@ struct MusicLibraryView: View {
     }
 
     private var suggestionsGrid: some View {
-        VStack(alignment: .leading, spacing: 32) {
+        LazyVStack(alignment: .leading, spacing: 32) {
             if !suggestions.isEmpty {
                 suggestionSection(title: "Recently Added Music", items: suggestions)
             }
