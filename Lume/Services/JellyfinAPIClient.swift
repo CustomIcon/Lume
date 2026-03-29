@@ -322,6 +322,23 @@ actor JellyfinAPIClient {
         return try await MainActor.run { try JSONDecoder().decode(BaseItemDto.self, from: data) }
     }
 
+    func getRecommendations() async throws -> [BaseItemDto] {
+        guard let userId else { throw APIError.unauthorized }
+        let queryItems = [
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio,UserData,Overview"),
+            URLQueryItem(name: "Limit", value: "12")
+        ]
+        let request = try buildRequest(path: "/Users/\(userId)/Suggestions", queryItems: queryItems)
+        let data = try await executeData(request)
+        
+        // Suggestions returns a BaseItemDtoQueryResult or similar? 
+        // Actually /Suggestions returns items directly or wrapped. 
+        // Let's assume BaseItemDtoQueryResult for safety if it's a query result.
+        // Actually /Suggestions returns a list of items.
+        let result = try await MainActor.run { try JSONDecoder().decode(BaseItemDtoQueryResult.self, from: data) }
+        return result.items ?? []
+    }
+
     func getSimilarItems(itemId: String, limit: Int = 12) async throws -> BaseItemDtoQueryResult {
         let queryItems = [
             URLQueryItem(name: "Limit", value: String(limit)),
@@ -651,7 +668,7 @@ actor JellyfinAPIClient {
         return URL(string: path)
     }
 
-    func getPlaybackInfo(itemId: String, mediaSourceId: String? = nil, audioStreamIndex: Int? = nil, subtitleStreamIndex: Int? = nil) async throws -> PlaybackInfoResponse {
+    func getPlaybackInfo(itemId: String, mediaSourceId: String? = nil, audioStreamIndex: Int? = nil, subtitleStreamIndex: Int? = nil, maxBitrate: Int = 140_000_000, allowDirectPlay: Bool = true) async throws -> PlaybackInfoResponse {
         guard let userId else { throw APIError.unauthorized }
         let path = "/Items/\(itemId)/PlaybackInfo"
         var queryItems = [
@@ -659,17 +676,17 @@ actor JellyfinAPIClient {
             URLQueryItem(name: "StartTimeTicks", value: "0"),
             URLQueryItem(name: "IsPlayback", value: "true"),
             URLQueryItem(name: "AutoOpenLiveStream", value: "true"),
-            URLQueryItem(name: "MaxStreamingBitrate", value: "140000000")
+            URLQueryItem(name: "MaxStreamingBitrate", value: String(maxBitrate))
         ]
         if let token = accessToken { queryItems.append(URLQueryItem(name: "api_key", value: token)) }
         if let mediaSourceId = mediaSourceId { queryItems.append(URLQueryItem(name: "MediaSourceId", value: mediaSourceId)) }
         
         let deviceProfile: [String: Any] = [
-            "MaxStreamingBitrate": 140000000,
-            "MaxStaticBitrate": 140000000,
-            "DirectPlayProfiles": [
+            "MaxStreamingBitrate": maxBitrate,
+            "MaxStaticBitrate": maxBitrate,
+            "DirectPlayProfiles": allowDirectPlay ? [
                 ["Container": "mp4,m4v,mov,mkv,avi,ts,mpegts", "Type": "Video", "VideoCodec": "h264,hevc,vp8,vp9,av1", "AudioCodec": "aac,mp3,ac3,eac3,dts,flac,opus,vorbis"]
-            ],
+            ] : [],
             "TranscodingProfiles": [
                 ["Container": "ts", "Type": "Video", "VideoCodec": "h264", "AudioCodec": "aac,mp3", "Protocol": "hls", "Context": "Streaming", "BreakOnNonKeyFrames": true]
             ],
@@ -775,10 +792,146 @@ actor JellyfinAPIClient {
     }
 
     func downloadRemoteSubtitle(itemId: String, id: String) async throws -> Data {
-        // This POST endpoint on Jellyfin usually downloads to the server, 
-        // but it also returns the data if we just want to save it locally.
         let request = try buildRequest(method: "POST", path: "/Items/\(itemId)/RemoteSubtitles/Download/\(id)")
         return try await executeData(request)
+    }
+
+    // MARK: - Intro Skipper & Media Segments
+    func getIntroTimestamps(itemId: String) async throws -> [IntroTimestamp] {
+        // We try /MediaSegments (Official/Newer), /Episode (confusedpolarbear), then /Items (other variants/future specs)
+        let paths = [
+            "/MediaSegments/\(itemId)?includeSegmentTypes=Intro&includeSegmentTypes=Outro",
+            "/Episode/\(itemId)/IntroTimestamps", 
+            "/Items/\(itemId)/IntroTimestamps"
+        ]
+        
+        for path in paths {
+            do {
+                let request = try buildRequest(path: path)
+                let data = try await executeData(request)
+                
+                let segments: [IntroTimestamp]? = await MainActor.run {
+                    if path.contains("MediaSegments") {
+                        guard let segmentResponse = try? JSONDecoder().decode(MediaSegmentResponse.self, from: data) else { return nil }
+                        return segmentResponse.items.filter { $0.type == "Intro" || $0.type == "Outro" }.map { seg in
+                            IntroTimestamp(
+                                start: Double(seg.startTicks) / 10_000_000.0,
+                                end: Double(seg.endTicks) / 10_000_000.0,
+                                type: seg.type.lowercased()
+                            )
+                        }
+                    } else if let list = try? JSONDecoder().decode([IntroTimestamp].self, from: data) {
+                        return list
+                    } else if let single = try? JSONDecoder().decode(IntroTimestamp.self, from: data) {
+                        return [single]
+                    }
+                    return nil
+                }
+                
+                if let result = segments, !result.isEmpty {
+                    return result
+                }
+            } catch {
+                await MainActor.run {
+                    LumeDebug("Intro Skipper: Tried path \(path) - not found or error: \(error.localizedDescription)")
+                }
+            }
+        }
+        
+        return []
+    }
+
+    // MARK: - Trickplay / Seek Preview
+    func getTrickplayManifest(itemId: String, width: Int = 320) async throws -> TrickplayManifest {
+        let request = try buildRequest(path: "/Videos/\(itemId)/Trickplay/\(width)/manifest.json")
+        let data = try await executeData(request)
+        return try await MainActor.run { try JSONDecoder().decode(TrickplayManifest.self, from: data) }
+    }
+
+    func trickplayImageURL(itemId: String, index: Int, width: Int = 320) -> URL? {
+        var path = "\(baseURL)/Videos/\(itemId)/Trickplay/\(width)/tiles/\(index).jpg"
+        if let token = accessToken {
+            path += "?api_key=\(token)"
+        }
+        return URL(string: path)
+    }
+}
+
+struct TrickplayManifest: Codable {
+    let version: String?
+    let width: Int
+    let height: Int
+    let interval: Int // in milliseconds
+    let count: Int
+    
+    enum CodingKeys: String, CodingKey {
+        case version = "Version"
+        case width = "Width"
+        case height = "Height"
+        case interval = "Interval"
+        case count = "Count"
+    }
+}
+
+struct IntroTimestamp: Decodable {
+    let start: Double
+    let end: Double
+    let type: String // "intro" or "outro"
+    
+    enum CodingKeys: String, CodingKey {
+        case start, end, type
+        case introStart = "IntroStart"
+        case introEnd = "IntroEnd"
+    }
+    
+    init(start: Double, end: Double, type: String = "intro") {
+        self.start = start
+        self.end = end
+        self.type = type
+    }
+    
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.type = (try? container.decode(String.self, forKey: .type)) ?? "intro"
+        
+        // Try various key names found in different plugin versions
+        if let s = try? container.decode(Double.self, forKey: .introStart) {
+            self.start = s
+        } else if let s = try? container.decode(Double.self, forKey: .start) {
+            self.start = s
+        } else {
+            throw DecodingError.keyNotFound(CodingKeys.introStart, .init(codingPath: decoder.codingPath, debugDescription: "No start key found"))
+        }
+
+        if let e = try? container.decode(Double.self, forKey: .introEnd) {
+            self.end = e
+        } else if let e = try? container.decode(Double.self, forKey: .end) {
+            self.end = e
+        } else {
+            throw DecodingError.keyNotFound(CodingKeys.introEnd, .init(codingPath: decoder.codingPath, debugDescription: "No end key found"))
+        }
+    }
+}
+
+struct MediaSegmentResponse: Decodable {
+    let items: [MediaSegment]
+    
+    enum CodingKeys: String, CodingKey {
+        case items = "Items"
+    }
+}
+
+struct MediaSegment: Decodable {
+    let id: String
+    let type: String
+    let startTicks: Int64
+    let endTicks: Int64
+    
+    enum CodingKeys: String, CodingKey {
+        case id = "Id"
+        case type = "Type"
+        case startTicks = "StartTicks"
+        case endTicks = "EndTicks"
     }
 }
 

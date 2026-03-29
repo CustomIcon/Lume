@@ -49,6 +49,7 @@ struct VLCTrackInfo: Identifiable, Hashable {
 
 struct VLCVideoPlayer: NSViewRepresentable {
     let url: URL
+    let mediaOptions: [String] // subtitle options, etc.
     @Binding var proxy: Proxy
     let onSecondsUpdated: (Double, Double) -> Void
     let onStateUpdated: (VLCMediaPlayerState) -> Void
@@ -85,6 +86,16 @@ struct VLCVideoPlayer: NSViewRepresentable {
         context.coordinator.mediaPlayer.drawable = view
 
         let media = VLCMedia(url: url)
+        media.addOptions(mediaOptions.reduce([String: String]()) { dict, opt in
+            var d = dict
+            let parts = opt.split(separator: "=")
+            if parts.count == 2 {
+                d[String(parts[0])] = String(parts[1])
+            } else {
+                d[opt] = nil
+            }
+            return d
+        })
         context.coordinator.mediaPlayer.media = media
         context.coordinator.mediaPlayer.play()
 
@@ -95,6 +106,16 @@ struct VLCVideoPlayer: NSViewRepresentable {
         let currentMediaURL = context.coordinator.mediaPlayer.media?.url
         if currentMediaURL != url {
             let media = VLCMedia(url: url)
+            media.addOptions(mediaOptions.reduce([String: String]()) { dict, opt in
+                var d = dict
+                let parts = opt.split(separator: "=")
+                if parts.count == 2 {
+                    d[String(parts[0])] = String(parts[1])
+                } else {
+                    d[opt] = nil
+                }
+                return d
+            })
             context.coordinator.mediaPlayer.media = media
             context.coordinator.mediaPlayer.play()
         }
@@ -178,9 +199,20 @@ struct VLCVideoPlayer: NSViewRepresentable {
         }
 
         func setSubtitleScale(_ scale: Int) {
-            // Try KVC first which is more robust than perform()
+            // Try KVC first (dynamic update)
             mediaPlayer?.setValue(NSNumber(value: Int32(scale)), forKey: "textRendererFontSize")
-            
+            // Some VLC versions use a different key or require Float
+            mediaPlayer?.setValue(NSNumber(value: Float(scale)), forKey: "textRendererFontSize")
+            forceSubtitleReload()
+        }
+        
+        func setSubtitleStyle(font: String, color: String, opacity: Double) {
+            // VLCKit doesn't reliably expose dynamic color/opacity updates via KVC.
+            // These styles are handled at media initialization in the VLCVideoPlayer view.
+            forceSubtitleReload()
+        }
+        
+        private func forceSubtitleReload() {
             // Toggling the track off and on forces VLC to reload the text renderer with new settings
             let current = mediaPlayer?.currentVideoSubTitleIndex ?? -1
             if current != -1 {
@@ -251,7 +283,16 @@ final class PlayerViewModel {
     var hasStartedPlaying = false
     var tracksLoaded = false
     var subtitleScale: Int = UserDefaults.standard.integer(forKey: "subtitleScale") == 0 ? 76 : UserDefaults.standard.integer(forKey: "subtitleScale")
+    var subtitleColor: String = UserDefaults.standard.string(forKey: "subtitleColor") ?? "#FFFFFF"
+    var subtitleBgOpacity: Double = UserDefaults.standard.double(forKey: "subtitleBgOpacity") == 0 ? 0.0 : UserDefaults.standard.double(forKey: "subtitleBgOpacity")
+    var subtitleFont: String = UserDefaults.standard.string(forKey: "subtitleFont") ?? "Inter"
+    
     var isFullscreen = false
+    var trickplayManifest: TrickplayManifest?
+    var cachedBaseURL: String = ""
+    var cachedToken: String?
+    var hasResumed = false
+    var showInfo = false
 
     var volume: Int32 = 100 {
         didSet {
@@ -261,6 +302,13 @@ final class PlayerViewModel {
     var lastVolume: Int32 = 100
     
     var playURL: URL?
+    
+    var intros: [IntroTimestamp] = []
+    var showSkipButton = false
+    var currentSegment: IntroTimestamp? = nil
+    
+    var nextItem: BaseItemDto? = nil
+    var previousItem: BaseItemDto? = nil
 
     func cleanup() {
         progressTimer?.invalidate()
@@ -274,6 +322,8 @@ final class PlayerViewModel {
         isLoading = false
         CursorHideState.shared.unhide()
         SleepPreventer.shared.stopPreventingSleep()
+        nextItem = nil
+        previousItem = nil
     }
     
     func setupFullscreenObserver() {
@@ -320,7 +370,7 @@ final class PlayerViewModel {
         // 3. Automatch Subtitles (only if requested in settings or default on)
         if subsOn {
             if let bestSub = findBestTrack(in: vlcSubtitleTracks, lang: prefSub) {
-                print("[Lume] Automatched subtitle: \(bestSub.name)")
+            LumeInfo("Automatched subtitle: \(bestSub.name)")
                 vlcProxy.setSubtitleTrack(bestSub.index)
                 selectedSubtitleIndex = bestSub.index
             } else {
@@ -337,9 +387,32 @@ final class PlayerViewModel {
         }
     }
     
+    func getTrickplayURL(itemId: String, index: Int, width: Int = 320) -> URL? {
+        guard !cachedBaseURL.isEmpty else { return nil }
+        var path = "\(cachedBaseURL)/Videos/\(itemId)/Trickplay/\(width)/tiles/\(index).jpg"
+        if let token = cachedToken {
+            path += "?api_key=\(token)"
+        }
+        return URL(string: path)
+    }
+
+    func loadTrickplay(apiClient: JellyfinAPIClient, itemId: String) async {
+        do {
+            trickplayManifest = try await apiClient.getTrickplayManifest(itemId: itemId)
+            LumeDebug("Loaded trickplay manifest: \(trickplayManifest?.count ?? 0) tiles")
+        } catch {
+            LumeError("Trickplay manifest not found for item \(itemId)")
+            trickplayManifest = nil
+        }
+    }
+
     func attachSubtitles(apiClient: JellyfinAPIClient, item: BaseItemDto) async {
         let base = await apiClient.getBaseURL()
         let token = await apiClient.getAccessToken()
+        
+        cachedBaseURL = base
+        cachedToken = token
+        
         let mediaSource = item.mediaSources?.first { $0.id == mediaSourceId } ?? item.mediaSources?.first
         
         guard let sourceId = mediaSource?.id, let streams = mediaSource?.mediaStreams else { return }
@@ -349,7 +422,7 @@ final class PlayerViewModel {
             if let delivery = stream.deliveryUrl {
                 let full = base + delivery + (delivery.contains("?") ? "&api_key=\(token ?? "")" : "?api_key=\(token ?? "")")
                 if let url = URL(string: full) {
-                    print("[Lume] Attaching subtitle: \(stream.displayTitle ?? "Unknown") -> \(full)")
+                LumeDebug("Attaching subtitle: \(stream.displayTitle ?? "Unknown") -> \(full)")
                     vlcProxy.addSubtitle(url: url)
                 }
             } else if stream.isExternal == true || stream.isTextSubtitleStream == true {
@@ -358,13 +431,66 @@ final class PlayerViewModel {
                 let idx = stream.index ?? 0
                 let urlString = "\(base)/Videos/\(item.id ?? "")/\(sourceId)/Subtitles/\(idx)/0/Stream.\(codec)?api_key=\(token ?? "")"
                 if let url = URL(string: urlString) {
-                    print("[Lume] Attaching fallback subtitle: \(urlString)")
+                    LumeDebug("Attaching fallback subtitle: \(urlString)")
                     vlcProxy.addSubtitle(url: url)
                 }
             }
         }
     }
-    
+
+    func loadIntros(apiClient: JellyfinAPIClient, itemId: String) async {
+        do {
+            intros = try await apiClient.getIntroTimestamps(itemId: itemId)
+            LumeDebug("Loaded \(intros.count) intros for item \(itemId)")
+        } catch {
+            LumeDebug("No intros found for \(itemId)")
+            intros = []
+        }
+    }
+
+    func loadSiblings(apiClient: JellyfinAPIClient, item: BaseItemDto) async {
+        nextItem = nil
+        previousItem = nil
+        guard item.type == "Episode", let seriesId = item.seriesId, let seasonId = item.seasonId else { return }
+        do {
+            let result = try await apiClient.getEpisodes(seriesId: seriesId, seasonId: seasonId)
+            let episodes = result.items ?? []
+            if let currentIndex = episodes.firstIndex(where: { $0.id == item.id }) {
+                if currentIndex < episodes.count - 1 {
+                    nextItem = episodes[currentIndex + 1]
+                }
+                if currentIndex > 0 {
+                    previousItem = episodes[currentIndex - 1]
+                }
+            }
+        } catch {
+            LumeError("Failed to load siblings: \(error.localizedDescription)")
+        }
+    }
+
+    func checkIntroVisibility(currentTime: Double) {
+        guard !intros.isEmpty else {
+            showSkipButton = false
+            currentSegment = nil
+            return
+        }
+
+        if let segment = intros.first(where: { currentTime >= $0.start && currentTime <= $0.end }) {
+            currentSegment = segment
+            showSkipButton = true
+        } else {
+            showSkipButton = false
+            currentSegment = nil
+        }
+    }
+
+    func skipSegment() {
+        guard let segment = currentSegment else { return }
+        vlcProxy.setSeconds(Duration.seconds(segment.end + 0.5))
+        currentPlaybackTime = segment.end + 0.5
+        showSkipButton = false
+    }
+
     private func findBestTrack(in tracks: [VLCTrackInfo], lang: String) -> VLCTrackInfo? {
         let l = lang.lowercased()
         // Try exact match in name (which often contains language code or name)
@@ -382,10 +508,12 @@ struct PlayerView: View {
     @Environment(\.dismissWindow) private var dismissWindow
     let item: BaseItemDto
 
+    @AppStorage("resumePlayback") private var resumePlayback = true
     @FocusState private var isFocused: Bool
     @State private var vm = PlayerViewModel()
     @State private var fullItem: BaseItemDto?
     @State private var errorMessage: String?
+    @AppStorage("skipIntroEnabled") private var skipIntroEnabled = true
     @State private var showSubtitleSearch = false
 
     private var resolvedItem: BaseItemDto { fullItem ?? item }
@@ -412,10 +540,17 @@ struct PlayerView: View {
                         .padding(.top, 8)
                 }
             } else if let playURL = vm.playURL {
-                VLCVideoPlayer(url: playURL, proxy: $vm.vlcProxy) { seconds, duration in
+                VLCVideoPlayer(
+                    url: playURL, 
+                    mediaOptions: [
+                        "sub-ass-override=1"
+                    ],
+                    proxy: $vm.vlcProxy
+                ) { seconds, duration in
                     guard !vm.isDraggingSlider else { return }
                     vm.currentPlaybackTime = seconds
                     vm.duration = duration
+                    vm.checkIntroVisibility(currentTime: seconds)
                 } onStateUpdated: { state in
                     switch state {
                     case .opening:
@@ -433,6 +568,18 @@ struct PlayerView: View {
                         vm.hasStartedPlaying = true
                         vm.isLoading = false
                         vm.vlcProxy.setSubtitleScale(vm.subtitleScale)
+                        
+                        // Resume from last position if possible
+                        if resumePlayback && !vm.hasResumed {
+                            if let ticks = resolvedItem.userData?.playbackPositionTicks, ticks > 0 {
+                                let seconds = Double(ticks) / 10_000_000.0
+                                LumeInfo("Resuming from saved position: \(seconds)s")
+                                vm.vlcProxy.setSeconds(Duration.seconds(seconds))
+                                vm.currentPlaybackTime = seconds
+                            }
+                            vm.hasResumed = true
+                        }
+                        
                         Task { await vm.loadTracksFromVLC(apiClient: session.apiClient, item: resolvedItem) }
                         if vm.lastReportedTime == -999.0 {
                             let ticks = Int64(vm.currentPlaybackTime * 10_000_000)
@@ -468,9 +615,23 @@ struct PlayerView: View {
                 .ignoresSafeArea()
                 .onAppear {
                     vm.vlcProxy.setSubtitleScale(vm.subtitleScale)
+                    vm.vlcProxy.setSubtitleStyle(font: vm.subtitleFont, color: vm.subtitleColor, opacity: vm.subtitleBgOpacity)
                 }
                 .onChange(of: vm.subtitleScale) { _, newValue in
                     vm.vlcProxy.setSubtitleScale(newValue)
+                    UserDefaults.standard.set(newValue, forKey: "subtitleScale")
+                }
+                .onChange(of: vm.subtitleColor) { _, n in
+                    vm.vlcProxy.setSubtitleStyle(font: vm.subtitleFont, color: n, opacity: vm.subtitleBgOpacity)
+                    UserDefaults.standard.set(n, forKey: "subtitleColor")
+                }
+                .onChange(of: vm.subtitleFont) { _, n in
+                    vm.vlcProxy.setSubtitleStyle(font: n, color: vm.subtitleColor, opacity: vm.subtitleBgOpacity)
+                    UserDefaults.standard.set(n, forKey: "subtitleFont")
+                }
+                .onChange(of: vm.subtitleBgOpacity) { _, n in
+                    vm.vlcProxy.setSubtitleStyle(font: vm.subtitleFont, color: vm.subtitleColor, opacity: n)
+                    UserDefaults.standard.set(n, forKey: "subtitleBgOpacity")
                 }
                 .zIndex(0)
             }
@@ -506,6 +667,31 @@ struct PlayerView: View {
                         ? LumePointerVisibility.visible
                         : LumePointerVisibility.hidden
                 )
+                
+                VStack(alignment: .trailing, spacing: 12) {
+                    Spacer()
+                    
+                    // Skip Intro / Credits Button
+                    if vm.showSkipButton && skipIntroEnabled {
+                        Button {
+                            vm.skipSegment()
+                        } label: {
+                            Label(vm.currentSegment?.type.lowercased() == "outro" ? "Skip Credits" : "Skip Intro", systemImage: "forward.end.fill")
+                                .font(.headline)
+                                .padding(.horizontal, 24)
+                                .padding(.vertical, 14)
+                                .glassEffect(in: Capsule())
+                                .shadow(color: .black.opacity(0.3), radius: 10)
+                        }
+                        .buttonStyle(.plain)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(.trailing, 40)
+                .padding(.bottom, vm.showControls ? 210 : 60)
+                .animation(.spring(response: 0.45, dampingFraction: 0.8), value: vm.showControls)
+                .zIndex(10)
             }
 
             if vm.isLoading && errorMessage == nil {
@@ -554,6 +740,70 @@ struct PlayerView: View {
         .onKeyPress { press in
             handleKeyPress(press)
         }
+        .overlay {
+            if vm.showInfo {
+                mediaInfoOverlay
+            }
+        }
+    }
+
+    private var mediaInfoOverlay: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Label("Stream Intelligence", systemImage: "info.circle.fill")
+                        .font(.headline)
+                    Spacer()
+                    Button { withAnimation { vm.showInfo = false } } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.title3)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.bottom, 8)
+
+                Group {
+                    infoRow(label: "Item Name", value: resolvedItem.displayName)
+                    
+                    if vm.playURL?.isFileURL == true {
+                        infoRow(label: "Offline Storage", value: vm.playURL?.path ?? "Unknown path", mono: true)
+                        infoRow(label: "Playback Type", value: "Offline / Local Download")
+                    } else {
+                        infoRow(label: "Source ID", value: vm.mediaSourceId ?? "Unknown")
+                        infoRow(label: "Session ID", value: vm.playSessionId ?? "Unknown")
+                        Divider().opacity(0.2)
+                        infoRow(label: "Stream URL", value: vm.playURL?.absoluteString ?? "N/A", mono: true)
+                        infoRow(label: "Playback Type", value: vm.playURL?.absoluteString.contains("static=true") == true ? "Direct Play" : (vm.playURL?.absoluteString.contains("transcode") == true ? "Transcoding" : "Direct Stream"))
+                    }
+                }
+            }
+            .padding(30)
+        }
+        .frame(width: 500)
+        .frame(maxHeight: 600)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.3), radius: 20)
+        .transition(.scale.combined(with: .opacity))
+    }
+
+    private func infoRow(label: String, value: String, mono: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label.uppercased())
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 12, design: mono ? .monospaced : .default))
+                .foregroundStyle(.primary)
+                .lineLimit(mono ? nil : 2) // URL stays expanded
+                .textSelection(.enabled)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.setString(value, forType: .string)
+        }
     }
 
     private func prepareAndPlay() async {
@@ -568,7 +818,7 @@ struct PlayerView: View {
 
         // 1. Check for local download
         if let localURL = session.downloadManager.getLocalURL(for: itemId) {
-            print("[Lume] Playing local file: \(localURL.path)")
+            LumeDebug("Playing local file: \(localURL.path)")
             vm.playURL = localURL
             vm.isLoading = false
             vm.hasStartedPlaying = true
@@ -576,12 +826,24 @@ struct PlayerView: View {
         }
 
         vm.statusMessage = "Fetching media info..."
+        
+        vm.cachedBaseURL = await session.apiClient.getBaseURL()
+        vm.cachedToken = await session.apiClient.getAccessToken()
+        
+        // Load trickplay manifest if available
+        Task { await vm.loadTrickplay(apiClient: session.apiClient, itemId: itemId) }
+        
+        // Load Intro Skipper data
+        Task {
+            await vm.loadIntros(apiClient: session.apiClient, itemId: itemId)
+            await vm.loadSiblings(apiClient: session.apiClient, item: resolvedItem)
+        }
 
         if fullItem == nil || fullItem?.mediaSources == nil {
             do {
                 fullItem = try await session.apiClient.getItem(itemId: itemId)
             } catch {
-                print("[Lume] Failed to fetch item details: \(error)")
+                LumeError("Failed to fetch item details: \(error)")
             }
         }
 
@@ -589,63 +851,88 @@ struct PlayerView: View {
         let token = await session.apiClient.getAccessToken()
         let mediaSourceId = resolvedItem.mediaSources?.first?.id
 
+        let preferDirectPlay = UserDefaults.standard.bool(forKey: "preferDirectPlay")
+        let maxBitrateMbps = UserDefaults.standard.integer(forKey: "maxStreamingBitrate")
+        // If 0 or 140, treat as "Auto/Highest"
+        let maxBitrate = (maxBitrateMbps == 0 || maxBitrateMbps == 140) ? 140_000_000 : (maxBitrateMbps * 1_000_000)
+        let effectiveBitrate = preferDirectPlay ? 140_000_000 : maxBitrate
+
         vm.statusMessage = "Negotiating stream..."
         do {
             let info = try await session.apiClient.getPlaybackInfo(
                 itemId: itemId,
                 mediaSourceId: mediaSourceId,
                 audioStreamIndex: nil,
-                subtitleStreamIndex: nil
+                subtitleStreamIndex: nil,
+                maxBitrate: effectiveBitrate,
+                allowDirectPlay: preferDirectPlay
             )
 
             if let source = info.mediaSources?.first {
-                if source.supportsDirectStream == true,
-                   let directURL = source.directStreamUrl {
-                    let fullURL = base + directURL
-                    print("[Lume] Using direct stream: \(fullURL)")
-                    vm.playURL = URL(string: fullURL)
-                    vm.playSessionId = info.playSessionId
-                    vm.mediaSourceId = source.id
-                    return
+                // If user prefers direct play, we try direct methods first
+                if preferDirectPlay {
+                    if source.supportsDirectPlay == true {
+                        let sourceId = source.id ?? mediaSourceId ?? itemId
+                        if item.type == "Channel" || item.type == "TvChannel" {
+                            vm.playURL = await session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId, maxBitrate: effectiveBitrate)
+                            LumeInfo("Using HLS Live channel stream: \(vm.playURL?.absoluteString ?? "")")
+                        } else {
+                            var directPlayURL = "\(base)/Videos/\(itemId)/stream?static=true&MediaSourceId=\(sourceId)"
+                            if let token { directPlayURL += "&api_key=\(token)" }
+                            LumeInfo("Using direct play: \(directPlayURL)")
+                            vm.playURL = URL(string: directPlayURL)
+                        }
+                        vm.playSessionId = info.playSessionId
+                        vm.mediaSourceId = source.id
+                        return
+                    }
+                    
+                    if source.supportsDirectStream == true,
+                       let directURL = source.directStreamUrl {
+                        let fullURL = base + directURL
+                        LumeInfo("Using direct stream: \(fullURL)")
+                        vm.playURL = URL(string: fullURL)
+                        vm.playSessionId = info.playSessionId
+                        vm.mediaSourceId = source.id
+                        return
+                    }
                 }
+
+                // If Transcoding is available or Direct Play is OFF/unsupported, use it
                 if let transURL = source.transcodingUrl {
                     let fullURL = base + transURL
-                    print("[Lume] Using transcode stream: \(fullURL)")
+                    LumeInfo("Using transcode stream: \(fullURL)")
                     vm.playURL = URL(string: fullURL)
                     vm.playSessionId = info.playSessionId
                     vm.mediaSourceId = source.id
                     return
                 }
-                if source.supportsDirectPlay == true {
-                    let sourceId = source.id ?? mediaSourceId ?? itemId
-                    if item.type == "Channel" || item.type == "TvChannel" {
-                        vm.playURL = await session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId)
-                        print("[Lume] Using HLS Live channel stream: \(vm.playURL?.absoluteString ?? "")")
-                    } else {
-                        var directPlayURL = "\(base)/Videos/\(itemId)/stream?static=true&MediaSourceId=\(sourceId)"
-                        if let token { directPlayURL += "&api_key=\(token)" }
-                        print("[Lume] Using direct play: \(directPlayURL)")
-                        vm.playURL = URL(string: directPlayURL)
-                    }
-                    vm.playSessionId = info.playSessionId
-                    vm.mediaSourceId = source.id
-                    return
+                
+                // Final fallback if we are forcing transcode but no URL was given by server yet
+                if !preferDirectPlay {
+                   let transURL = await session.apiClient.streamURL(itemId: itemId, mediaSourceId: source.id, maxBitrate: effectiveBitrate)
+                   LumeInfo("Forcing transcoding HLS fallback: \(transURL?.absoluteString ?? "N/A")")
+                   vm.playURL = transURL
+                   vm.playSessionId = info.playSessionId
+                   vm.mediaSourceId = source.id
+                   return
                 }
             }
         } catch {
-            print("[Lume] PlaybackInfo failed: \(error). Falling back to direct stream URL.")
+            LumeDebug("PlaybackInfo failed: \(error). Falling back to direct stream URL.")
         }
 
         vm.statusMessage = "Using fallback stream..."
         let sourceId = mediaSourceId ?? itemId
         vm.mediaSourceId = sourceId
-        if item.type == "Channel" || item.type == "TvChannel" {
-            vm.playURL = await session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId)
-            print("[Lume] Using HLS fallback for channel: \(vm.playURL?.absoluteString ?? "")")
+        
+        if !preferDirectPlay || item.type == "Channel" || item.type == "TvChannel" {
+            vm.playURL = await session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId, maxBitrate: effectiveBitrate)
+            LumeInfo("Using HLS fallback: \(vm.playURL?.absoluteString ?? "")")
         } else {
             var fallbackURL = "\(base)/Videos/\(itemId)/stream?static=true&MediaSourceId=\(sourceId)"
             if let token { fallbackURL += "&api_key=\(token)" }
-            print("[Lume] Using fallback: \(fallbackURL)")
+            LumeInfo("Using direct play fallback: \(fallbackURL)")
             vm.playURL = URL(string: fallbackURL)
         }
     }
@@ -693,21 +980,21 @@ struct PlayerView: View {
 
     private var topLiquidBar: some View {
         HStack(spacing: 20) {
-            Button { stopPlayback() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.title3.bold())
-                    .foregroundStyle(.white)
-                    .padding(14)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .overlay(Circle().stroke(.white.opacity(0.1), lineWidth: 1))
-            }
-            .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(item.displayName)
-                    .font(.system(size: 20, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .shadow(radius: 4)
+                HStack(spacing: 6) {
+                    if item.type == "Episode", let seriesName = item.seriesName {
+                        Text(seriesName)
+                            .foregroundStyle(.white.opacity(0.8))
+                        Text(":")
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
+                    Text(item.displayName)
+                        .foregroundStyle(.white)
+                }
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+                .shadow(radius: 4)
+
                 if let year = item.productionYear {
                     Text(String(year))
                         .font(.system(size: 14, weight: .medium, design: .rounded))
@@ -723,53 +1010,48 @@ struct PlayerView: View {
                     liquidMenu(label: "Audio", icon: "speaker.wave.2") { audioMenu }
                 }
                 
-                if vm.selectedSubtitleIndex != -1 {
-                    HStack(spacing: 4) {
-                        Button { updateSize(min(80, vm.subtitleScale + 2)) } label: {
-                            Image(systemName: "minus")
-                                .font(.system(size: 10, weight: .bold))
-                                .padding(8)
-                                .background(.white.opacity(0.1), in: Circle())
-                        }
-                        .buttonStyle(.plain)
+                // Consolidated Captions Pill
+                HStack(spacing: 0) {
+                    liquidMenuButton(label: "Captions", icon: "captions.bubble") { subtitleMenu }
+                    
+                    if vm.selectedSubtitleIndex != -1 {
+                        Divider().frame(height: 20).background(.white.opacity(0.12)).padding(.horizontal, 4)
                         
-                        VStack(spacing: 0) {
+                        Menu {
+                            subtitleStyleMenu
+                        } label: {
                             Image(systemName: "textformat.size")
-                                .font(.system(size: 10))
-                            Text("\(100 - vm.subtitleScale)")
-                                .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        }
-                        .frame(width: 28)
-                        
-                        Button { updateSize(max(8, vm.subtitleScale - 2)) } label: {
-                            Image(systemName: "plus")
-                                .font(.system(size: 10, weight: .bold))
-                                .padding(8)
-                                .background(.white.opacity(0.1), in: Circle())
+                                .font(.system(size: 15, weight: .bold))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
                         }
                         .buttonStyle(.plain)
+                        .help("Subtitle Styling")
                     }
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 4)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
-                    .transition(.asymmetric(insertion: .opacity.combined(with: .scale), removal: .opacity.combined(with: .scale)))
                 }
-                
-                liquidMenu(label: "Captions", icon: "captions.bubble") { subtitleMenu }
+                .glassEffect(in: Capsule())
                 
                 Button { toggleFullscreen() } label: {
                     Image(systemName: vm.isFullscreen ? "arrow.down.right.and.arrow.up.left" : "viewfinder")
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(.white)
-                        .padding(10)
+                        .padding(14)
+                        .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .background(.white.opacity(0.1), in: Circle())
-                .padding(4)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
+                .glassEffect(in: Capsule())
                 .help(vm.isFullscreen ? "Exit Fullscreen" : "Full Screen")
+
+                Button { withAnimation { vm.showInfo.toggle() } } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(14)
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .glassEffect(in: Capsule())
+                .help("Media Information")
             }
             .padding(.horizontal, 30)
             .padding(.top, 40)
@@ -794,7 +1076,7 @@ struct PlayerView: View {
                     }
                     .padding(.horizontal, 4)
 
-                    ModernScrubber(vm: vm)
+                    ModernScrubber(vm: vm, item: resolvedItem)
                 } else {
                     HStack {
                         Circle()
@@ -811,37 +1093,71 @@ struct PlayerView: View {
             .padding(.horizontal, 30)
 
             ZStack {
-                HStack(spacing: 40) {
-                    Button { vm.currentPlaybackTime = vm.vlcProxy.jumpBackward(Duration.seconds(10)) } label: {
-                        Image(systemName: "gobackward.10")
-                            .font(.title2)
-                            .foregroundStyle(.white)
+                HStack(spacing: 30) {
+                    if resolvedItem.type == "Episode", let prev = vm.previousItem {
+                        Button {
+                            stopPlayback()
+                            session.activeVideoItem = prev
+                        } label: {
+                            Image(systemName: "backward.end.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(14)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .glassEffect(in: Circle())
                     }
-                    .buttonStyle(.plain)
 
-                    Button { togglePlay() } label: {
-                        Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 44))
-                            .foregroundStyle(.white)
-                            .shadow(color: .white.opacity(0.4), radius: 10)
-                    }
-                    .buttonStyle(.plain)
+                    HStack(spacing: 30) {
+                        Button { vm.currentPlaybackTime = vm.vlcProxy.jumpBackward(Duration.seconds(10)) } label: {
+                            Image(systemName: "gobackward.10")
+                                .font(.title2)
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
 
-                    Button { vm.currentPlaybackTime = vm.vlcProxy.jumpForward(Duration.seconds(10)) } label: {
-                        Image(systemName: "goforward.10")
-                            .font(.title2)
-                            .foregroundStyle(.white)
+                        Button { togglePlay() } label: {
+                            Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 44))
+                                .foregroundStyle(.white)
+                                .shadow(color: .white.opacity(0.4), radius: 10)
+                                .frame(width: 64, height: 64)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+
+                        Button { vm.currentPlaybackTime = vm.vlcProxy.jumpForward(Duration.seconds(10)) } label: {
+                            Image(systemName: "goforward.10")
+                                .font(.title2)
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
+                    .padding(.horizontal, 30)
+                    .padding(.vertical, 15)
+                    .glassEffect(in: Capsule())
+
+                    if resolvedItem.type == "Episode", let next = vm.nextItem {
+                        Button {
+                            stopPlayback()
+                            session.activeVideoItem = next
+                        } label: {
+                            Image(systemName: "forward.end.fill")
+                                .font(.system(size: 14, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(14)
+                                .contentShape(Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .glassEffect(in: Circle())
+                    }
                 }
-                .padding(.horizontal, 30)
-                .padding(.vertical, 15)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
                 
-                HStack {
-                    Spacer()
-                    
                 HStack {
                     Spacer()
                     
@@ -868,8 +1184,7 @@ struct PlayerView: View {
                         .frame(width: 100)
                     }
                     .padding(10)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
+                    .glassEffect(in: Capsule())
                 }
                 .padding(.trailing, 30)
             }
@@ -880,6 +1195,18 @@ struct PlayerView: View {
                 .ignoresSafeArea()
         )
     }
+
+    private func liquidMenuButton<Content: View>(label: String, icon: String, @ViewBuilder menu: () -> Content) -> some View {
+        Menu { menu() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                Text(label).font(.system(size: 14, weight: .semibold, design: .rounded))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private func liquidMenu<Content: View>(label: String, icon: String, @ViewBuilder menu: () -> Content) -> some View {
@@ -890,10 +1217,23 @@ struct PlayerView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(.white.opacity(0.1), lineWidth: 1))
+            .contentShape(Capsule())
+            .glassEffect(in: Capsule())
         }
         .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var subtitleStyleMenu: some View {
+        Section("Subtitle Size") {
+            Button("Tiny") { updateSize(130) }
+            Button("Small") { updateSize(100) }
+            Button("Standard") { updateSize(80) }
+            Button("Large") { updateSize(60) }
+            Button("Extra Large") { updateSize(45) }
+            Button("Huge") { updateSize(30) }
+            Button("Massive") { updateSize(15) }
+        }
     }
 
     @ViewBuilder
@@ -985,17 +1325,27 @@ struct PlayerView: View {
         vm.cleanup()
         if session.activeVideoItem?.id == item.id {
             withAnimation { session.activeVideoItem = nil }
-            dismissWindow()
+            dismissWindow(id: "video-player")
         }
     }
 
     private func toggleFullscreen() {
-        // Robust window lookup strategy
-        let targetWindow = NSApp.windows.first { window in
-            window.isVisible && (window.title.contains("Video Player") || window.title.contains(item.name ?? ""))
-        } ?? NSApp.keyWindow ?? NSApp.mainWindow
+        // High-precision window lookup:
+        // 1. The key window (where the user interaction actually happened)
+        // 2. The window with our dedicated 'video-player' ID or title
+        // 3. The main window as a final fallback
+        let candidates = [
+            NSApp.keyWindow,
+            NSApp.windows.first { $0.isVisible && ($0.identifier?.rawValue.contains("video-player") == true || $0.title == "Video Player") },
+            NSApp.mainWindow
+        ].compactMap { $0 }
         
-        guard let window = targetWindow else { return }
+        // We MUST ensure we don't accidentally toggle the main navigation window (titled "Lume")
+        // unless it's literally the only window available.
+        guard let window = candidates.first(where: { $0.title != "Lume" }) ?? candidates.first else {
+            LumeError("Could not find any window to toggle fullscreen")
+            return
+        }
         
         // Ensure the window has the proper flags to enter native macOS fullscreen spaces
         if !window.collectionBehavior.contains(.fullScreenPrimary) {
@@ -1057,7 +1407,10 @@ struct PlayerView: View {
 }
 
 struct ModernScrubber: View {
+    @Environment(SessionManager.self) private var session
+    @AppStorage("enableSeekPreviews") private var enableSeekPreviews = true
     @Bindable var vm: PlayerViewModel
+    let item: BaseItemDto
     @State private var isHovering = false
     @State private var hoverLocation: CGFloat = 0
 
@@ -1065,8 +1418,13 @@ struct ModernScrubber: View {
         GeometryReader { geo in
             let progress = max(0, min(1, CGFloat(vm.currentPlaybackTime / max(vm.duration, 1))))
             let bufferProgress = max(0, min(1, CGFloat(vm.bufferedTime / max(vm.duration, 1))))
-            let dragLocX = min(max(0, hoverLocation), geo.size.width)
-            let hoverTime = Double(dragLocX / geo.size.width) * vm.duration
+            
+            // Fixed coordinate mapping: Ensure drag position is perfectly relative to bar width
+            let currentDragPos = progress * geo.size.width
+            let dragLocX = min(max(0, vm.isDraggingSlider ? currentDragPos : hoverLocation), geo.size.width)
+            let hoverTime = Double(dragLocX / max(geo.size.width, 1)) * vm.duration
+            let showPreviewImage = enableSeekPreviews && vm.trickplayManifest != nil
+            let previewYOffset: CGFloat = showPreviewImage ? -125 : -40
 
             ZStack(alignment: .leading) {
                 Capsule().fill(.white.opacity(0.15))
@@ -1088,15 +1446,39 @@ struct ModernScrubber: View {
                     }
 
                 if isHovering || vm.isDraggingSlider {
-                    Text(formatTime(vm.isDraggingSlider ? vm.currentPlaybackTime : hoverTime))
-                        .font(.system(size: 11, weight: .bold, design: .monospaced))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                        .shadow(color: .black.opacity(0.2), radius: 6)
-                        .offset(x: dragLocX - 35, y: -35)
+                    let previewTime = vm.isDraggingSlider ? vm.currentPlaybackTime : hoverTime
+                    
+                    VStack(spacing: 8) {
+                        // Trickplay Image Preview
+                        if enableSeekPreviews,
+                           let manifest = vm.trickplayManifest,
+                           let itemId = vm.mediaSourceId ?? item.id {
+                            let interval = Double(manifest.interval) / 1000.0
+                            let index = Int(previewTime / max(interval, 1.0))
+                            
+                            AsyncImage(url: vm.getTrickplayURL(itemId: itemId, index: index)) { image in
+                                image.resizable()
+                                    .aspectRatio(contentMode: .fill)
+                            } placeholder: {
+                                Color.black.overlay(ProgressView().scaleEffect(0.5))
+                            }
+                            .frame(width: 160, height: 90)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(.white.opacity(0.15), lineWidth: 1))
+                            .shadow(color: .black.opacity(0.3), radius: 10)
+                        }
+                        
+                        Text(formatTime(previewTime))
+                            .font(.system(size: 11, weight: .bold, design: .monospaced))
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .glassEffect(in: RoundedRectangle(cornerRadius: 8))
+                            .shadow(color: .black.opacity(0.2), radius: 6)
+                    }
+                    .offset(x: min(max(0, dragLocX - 80), geo.size.width - 160), y: previewYOffset)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.8), value: isHovering)
             .animation(.interactiveSpring(response: 0.3, dampingFraction: 0.8), value: vm.isDraggingSlider)
             .contentShape(Rectangle())
@@ -1135,3 +1517,4 @@ struct ModernScrubber: View {
         return String(format: "%d:%02d", m, s)
     }
 }
+

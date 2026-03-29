@@ -45,7 +45,7 @@ A modern, native Jellyfin client for macOS, designed with a focus on aesthetics,
 
 ### Prerequisites
 
-*   macOS 14.0 or later.
+*   macOS 26.0 or later.
 *   A running **Jellyfin** server.
 
 ### Installation

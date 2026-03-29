@@ -24,7 +24,7 @@ struct SearchView: View {
                     ContentUnavailableView(
                         "Search Your Library",
                         systemImage: "magnifyingglass",
-                        description: Text("Search across all your libraries for movies, shows, music, and more.")
+                        description: Text("Search across all your libraries for movies, shows, and more.")
                     )
                 } else {
                     ScrollView {
@@ -118,7 +118,7 @@ struct SearchView: View {
         isLoadingSuggestions = true
         do {
             let result = try await session.apiClient.getItems(
-                includeItemTypes: ["Movie", "Series", "MusicArtist"],
+                includeItemTypes: ["Movie", "Series"],
                 sortBy: ["IsFavoriteOrLiked", "Random"],
                 limit: 24,
                 recursive: true

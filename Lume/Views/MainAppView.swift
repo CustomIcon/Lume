@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 enum SidebarItem: Hashable {
     case home
@@ -13,8 +14,10 @@ struct MainAppView: View {
     @State private var selectedSidebarItem: SidebarItem?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @State private var isRefreshing = false
+    @State private var showSignOutAlert = false
     @AppStorage("enableAnimations") private var enableAnimations = true
     @Environment(\.openWindow) private var openWindow
+    @Query private var allSessions: [UserSession]
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -25,7 +28,8 @@ struct MainAppView: View {
                     if selectedSidebarItem == .settings {
                         SettingsView()
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                            .background(.ultraThinMaterial)
+                            .background(ThemeManager.shared.currentFlavor == .oled ? ThemeManager.shared.currentFlavor.backgroundColor : Color.clear)
+                            .background(ThemeManager.shared.currentFlavor == .oled ? AnyShapeStyle(Color.clear) : AnyShapeStyle(.ultraThinMaterial))
                     } else {
                         NavigationStack {
                             detailContent
@@ -42,27 +46,37 @@ struct MainAppView: View {
                                         ItemDetailView(item: item)
                                     }
                                 }
+                                .navigationDestination(for: BaseItemPerson.self) { person in
+                                    PersonDetailView(person: person)
+                                }
                                 .navigationDestination(for: String.self) { seriesId in
                                     SeriesDownloadsDetailView(seriesId: seriesId)
                                 }
                         }
                         .scrollContentBackground(.hidden)
-                        .background(.ultraThinMaterial)
+                        .background(ThemeManager.shared.currentFlavor == .oled ? ThemeManager.shared.currentFlavor.backgroundColor : Color.clear)
+                        .background(ThemeManager.shared.currentFlavor == .oled ? AnyShapeStyle(Color.clear) : AnyShapeStyle(.ultraThinMaterial))
                         .toolbarBackground(.hidden, for: .windowToolbar)
                         .toolbarBackground(.hidden, for: .automatic)
                     }
                 }
                 .background(
-                    LinearGradient(
-                        colors: [
-                            ThemeManager.shared.currentFlavor.accentColor.opacity(0.15),
-                            ThemeManager.shared.currentFlavor.backgroundColor,
-                            ThemeManager.shared.currentFlavor.backgroundColor,
-                            ThemeManager.shared.currentFlavor.accentColor.opacity(0.05)
-                        ],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
+                    Group {
+                        if ThemeManager.shared.currentFlavor == .oled {
+                            ThemeManager.shared.currentFlavor.backgroundColor
+                        } else {
+                            LinearGradient(
+                                colors: [
+                                    ThemeManager.shared.currentFlavor.accentColor.opacity(0.15),
+                                    ThemeManager.shared.currentFlavor.backgroundColor,
+                                    ThemeManager.shared.currentFlavor.backgroundColor,
+                                    ThemeManager.shared.currentFlavor.accentColor.opacity(0.05)
+                                ],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        }
+                    }
                 )
                 .animation(enableAnimations ? .spring(response: 0.35, dampingFraction: 0.85) : nil, value: selectedSidebarItem)
             }
@@ -140,26 +154,18 @@ struct MainAppView: View {
 
                 if !session.isOffline {
                     Section("Libraries") {
-                        ForEach(session.libraries) { library in
+                        ForEach(session.visibleLibraries) { library in
                             NavigationLink(value: SidebarItem.library(library)) {
                                 Label(library.displayName, systemImage: iconForCollectionType(library.collectionType))
                             }
                         }
                     }
                 }
-
+                
                 Section {
                     NavigationLink(value: SidebarItem.settings) {
                         Label("Settings", systemImage: "gearshape")
                     }
-                    
-                    Button {
-                        Task { await session.logout() }
-                    } label: {
-                        Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
                 }
             }
             .listStyle(.sidebar)
@@ -172,15 +178,96 @@ struct MainAppView: View {
                     .padding(12)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+
+            // Profile Section at the very bottom
+            if let currentSession = session.currentSession {
+                Divider().padding(.horizontal, 16).opacity(0.3)
+                
+                Menu {
+                    Section("Saved Accounts") {
+                        // Sessions on THIS server
+                        let otherSessions = allSessions.filter { 
+                            $0.serverID == session.currentServer?.deviceID && $0.userID != currentSession.userID 
+                        }
+                        
+                        ForEach(otherSessions) { s in
+                            Button {
+                                Task { await session.switchUser(to: s) }
+                            } label: {
+                                Label(s.username, systemImage: "person.circle")
+                            }
+                        }
+                        
+                        Button {
+                            session.addAnotherUser()
+                        } label: {
+                            Label("Add Another Account", systemImage: "plus")
+                        }
+                    }
+                    
+                    Divider()
+                    
+                    Button(role: .destructive) {
+                        showSignOutAlert = true
+                    } label: {
+                        Label("Sign Out", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                } label: {
+                    HStack(spacing: 12) {
+                        Circle()
+                            .fill(ThemeManager.shared.currentFlavor.accentColor.opacity(0.15))
+                            .frame(width: 32, height: 32)
+                            .overlay {
+                                Text(currentSession.username.prefix(1).uppercased())
+                                    .font(.system(size: 14, weight: .bold, design: .rounded))
+                                    .foregroundStyle(ThemeManager.shared.currentFlavor.accentColor)
+                            }
+                        
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(currentSession.username)
+                                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                            Text(session.currentServer?.serverName ?? "Offline")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        Spacer()
+                        
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .contentShape(Rectangle())
+                }
+                .menuStyle(.button)
+                .buttonStyle(.plain)
+                .padding(8)
+            }
         }
         .background {
-            Rectangle()
-                .fill(.ultraThinMaterial)
-                .ignoresSafeArea(.container, edges: .top)
+            if ThemeManager.shared.currentFlavor == .oled {
+                ThemeManager.shared.currentFlavor.secondaryBackground
+                    .ignoresSafeArea()
+            } else {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .ignoresSafeArea(.container, edges: .top)
+            }
         }
-        .toolbarBackground(.hidden)
+        .toolbarBackground(.hidden, for: .windowToolbar)
+        .toolbarBackground(.hidden, for: .automatic)
         .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 300)
         .navigationTitle("Lume")
+        .alert("Sign Out?", isPresented: $showSignOutAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Sign Out", role: .destructive) {
+                Task { await session.logout() }
+            }
+        } message: {
+            Text("You will need to sign in again to access your libraries.")
+        }
     }
 
     private func toggleSidebar() {
@@ -203,7 +290,7 @@ struct MainAppView: View {
                 libraryView(for: library)
             }
         }
-        .id(selectedSidebarItem)
+        .id("\(selectedSidebarItem?.hashValue ?? 0)-\(session.refreshCounter)")
         .transition(enableAnimations ? .asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.98)), removal: .opacity) : .identity)
     }
 

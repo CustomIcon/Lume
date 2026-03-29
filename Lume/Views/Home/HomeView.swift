@@ -7,6 +7,7 @@ struct HomeView: View {
     @State private var nextUp: [BaseItemDto] = []
 
     @State private var latestByLibrary: [(library: BaseItemDto, items: [BaseItemDto])] = []
+    @State private var recommendations: (source: BaseItemDto, items: [BaseItemDto])?
     @State private var isLoading = true
     @State private var slideIndex = 0
 
@@ -20,7 +21,7 @@ struct HomeView: View {
                     // Next Up (Featured Slideshow)
                     if !nextUp.isEmpty {
                         ZStack(alignment: .bottom) {
-                            ForEach(Array(nextUp.prefix(6).enumerated()), id: \.offset) { index, item in
+                            ForEach(Array(nextUp.prefix(12).enumerated()), id: \.offset) { index, item in
                                 if slideIndex == index {
                                     FeaturedSlideView(item: item)
                                         .transition(.opacity.combined(with: .scale(scale: 1.05)))
@@ -31,7 +32,7 @@ struct HomeView: View {
                             HStack {
                                 Button {
                                     withAnimation(.spring()) {
-                                        let count = min(nextUp.count, 6)
+                                        let count = min(nextUp.count, 12)
                                         slideIndex = (slideIndex - 1 + count) % count
                                     }
                                 } label: {
@@ -39,7 +40,7 @@ struct HomeView: View {
                                         .font(.system(size: 16, weight: .bold))
                                         .scaleEffect(x: 0.8, y: 1.8) // Stretched vertically
                                         .frame(width: 32, height: 80)
-                                        .background(.ultraThinMaterial, in: Capsule())
+                                        .glassEffect(in: Capsule())
                                         .contentShape(Capsule())
                                 }
                                 .buttonStyle(.plain)
@@ -50,7 +51,7 @@ struct HomeView: View {
                                 
                                 Button {
                                     withAnimation(.spring()) {
-                                        let count = min(nextUp.count, 6)
+                                        let count = min(nextUp.count, 12)
                                         slideIndex = (slideIndex + 1) % count
                                     }
                                 } label: {
@@ -58,7 +59,7 @@ struct HomeView: View {
                                         .font(.system(size: 16, weight: .bold))
                                         .scaleEffect(x: 0.8, y: 1.8) // Stretched vertically
                                         .frame(width: 32, height: 80)
-                                        .background(.ultraThinMaterial, in: Capsule())
+                                        .glassEffect(in: Capsule())
                                         .contentShape(Capsule())
                                 }
                                 .buttonStyle(.plain)
@@ -68,7 +69,7 @@ struct HomeView: View {
                             .frame(maxHeight: .infinity)
                             
                             HStack(spacing: 8) {
-                                ForEach(0..<min(nextUp.count, 6), id: \.self) { i in
+                                ForEach(0..<min(nextUp.count, 12), id: \.self) { i in
                                     Circle()
                                         .fill(slideIndex == i ? Color.white : Color.white.opacity(0.3))
                                         .frame(width: 8, height: 8)
@@ -87,14 +88,14 @@ struct HomeView: View {
                         .padding(.bottom, 50)
                         .onReceive(Timer.publish(every: 8, on: .main, in: .common).autoconnect()) { _ in
                             withAnimation(.easeInOut(duration: 1.0)) {
-                                let count = min(nextUp.count, 6)
+                                let count = min(nextUp.count, 12)
                                 slideIndex = (slideIndex + 1) % count
                             }
                         }
                         .background {
                             Button("") {
                                 withAnimation(.spring()) {
-                                    let count = min(nextUp.count, 6)
+                                    let count = min(nextUp.count, 12)
                                     slideIndex = (slideIndex - 1 + count) % count
                                 }
                             }
@@ -103,7 +104,7 @@ struct HomeView: View {
                             
                             Button("") {
                                 withAnimation(.spring()) {
-                                    let count = min(nextUp.count, 6)
+                                    let count = min(nextUp.count, 12)
                                     slideIndex = (slideIndex + 1) % count
                                 }
                             }
@@ -149,6 +150,25 @@ struct HomeView: View {
                             .padding(.horizontal)
                         }
                     }
+                    
+                    // Recommendations
+                    if let recommendations {
+                        sectionHeader("Because you watched \(recommendations.source.displayName)", systemImage: "wand.and.stars")
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            LazyHStack(spacing: 12) {
+                                ForEach(recommendations.items, id: \.id) { item in
+                                    NavigationLink(value: item) {
+                                        ItemPosterCard(item: item, apiClient: session.apiClient, width: 140)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .itemContextMenu(item: item, session: session, onPlay: {
+                                        session.activeVideoItem = item
+                                    })
+                                }
+                            }
+                            .padding(.horizontal)
+                        }
+                    }
 
                     if continueWatching.isEmpty && nextUp.isEmpty && latestByLibrary.isEmpty {
                         ContentUnavailableView(
@@ -181,8 +201,16 @@ struct HomeView: View {
         isLoading = true
         let apiClient = session.apiClient
 
-        async let resumeTask = apiClient.getResumeItems(mediaTypes: ["Video"])
-        async let nextUpTask = apiClient.getNextUp()
+        async let resumeTask = apiClient.getResumeItems(limit: 24, mediaTypes: ["Video"])
+        async let nextUpTask = apiClient.getNextUp(limit: 40)
+        async let latestPlayedTask = apiClient.getItems(
+            includeItemTypes: ["Movie", "Series"],
+            sortBy: ["DatePlayed", "SortName"],
+            sortOrder: "Descending",
+            limit: 1,
+            recursive: true,
+            isPlayed: true
+        )
 
         do {
             let resumeResult = try await resumeTask
@@ -198,6 +226,24 @@ struct HomeView: View {
             nextUp = []
         }
 
+        // Recommendations logic
+        do {
+            let played = try await latestPlayedTask
+            if let lastWatched = played.items?.first, let itemId = lastWatched.id {
+                let similar = try await apiClient.getSimilarItems(itemId: itemId, limit: 12)
+                let items = similar.items ?? []
+                if !items.isEmpty {
+                    recommendations = (source: lastWatched, items: items)
+                } else {
+                    recommendations = nil
+                }
+            } else {
+                recommendations = nil
+            }
+        } catch {
+            recommendations = nil
+        }
+
 
 
         var latestResults: [(library: BaseItemDto, items: [BaseItemDto])] = []
@@ -206,7 +252,7 @@ struct HomeView: View {
             let collectionType = library.collectionType ?? ""
             guard collectionType != "livetv" else { continue }
             do {
-                let items = try await apiClient.getLatestItems(parentId: libId, limit: 16)
+                let items = try await apiClient.getLatestItems(parentId: libId, limit: 32)
                 if !items.isEmpty {
                     latestResults.append((library: library, items: items))
                 }
@@ -249,7 +295,7 @@ private struct FeaturedSlideView: View {
                     stops: [
                         .init(color: .clear, location: 0.0),
                         .init(color: .black.opacity(0.4), location: 0.7),
-                        .init(color: .black.opacity(0.8), location: 1.0)
+                        .init(color: .black, location: 1.0)
                     ],
                     startPoint: .top,
                     endPoint: .bottom

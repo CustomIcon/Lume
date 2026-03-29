@@ -394,7 +394,7 @@ struct ArtistImageView: View {
     let apiClient: JellyfinAPIClient
     @State private var imageURL: URL?
     var body: some View {
-        RemoteImageView(url: imageURL, section: .music, cornerRadius: 80)
+        RemoteImageView(url: imageURL, section: .music, cornerRadius: 80, title: artist.displayName, itemType: artist.type)
             .task {
                 if let id = artist.id {
                     imageURL = await apiClient.imageURL(itemId: id, imageType: "Primary", maxWidth: 320, tag: artist.imageTags?["Primary"])

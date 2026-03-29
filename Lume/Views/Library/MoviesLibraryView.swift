@@ -152,7 +152,7 @@ struct MovieListRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RemoteImageView(url: imageURL, section: .movies, cornerRadius: 4)
+            RemoteImageView(url: imageURL, section: .movies, cornerRadius: 4, title: item.displayName, itemType: item.type)
                 .frame(width: 40, height: 60)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.displayName)

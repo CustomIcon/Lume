@@ -115,7 +115,7 @@ private struct SeriesDownloadCard: View {
                     .font(.caption2.bold())
                     .padding(.horizontal, 6)
                     .padding(.vertical, 2)
-                    .background(.ultraThinMaterial, in: Capsule())
+                    .glassEffect(in: Capsule())
                     .padding(8)
             }
             
@@ -214,7 +214,7 @@ private struct DownloadItemCard: View {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(.green)
                         .padding(8)
-                        .background(.ultraThinMaterial, in: Circle())
+                        .glassEffect(in: Circle())
                         .padding(4)
                 }
             }
@@ -369,7 +369,7 @@ struct DownloadEpisodeRow: View {
             .buttonStyle(.bordered)
         }
         .padding(8)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .glassEffect(in: RoundedRectangle(cornerRadius: 8))
         .contextMenu {
             Button(role: .destructive) {
                 session.downloadManager.deleteDownload(itemId: item.itemId)

@@ -6,7 +6,9 @@ struct RemoteImageView: View {
     var cornerRadius: CGFloat = 8
     var aspectRatio: CGFloat? = nil
     var title: String? = nil
+    var itemType: String? = nil
     var contentMode: ContentMode = .fill
+    var hideTitle: Bool = false
 
     @State private var image: NSImage? = nil
     @State private var isLoading = false
@@ -92,7 +94,11 @@ struct RemoteImageView: View {
     private var placeholderView: some View {
         Group {
             if section == .books, let title = title {
-                BookPlaceholderView(title: title, cornerRadius: cornerRadius)
+                DynamicPlaceholderView(title: title, icon: "book.pages", cornerRadius: cornerRadius, useSerif: true, hideTitle: hideTitle)
+            } else if (itemType == "MusicArtist" || itemType == "Artist" || itemType == "AlbumArtist" || itemType == "Person" || itemType == "Actor" || itemType == "Director" || itemType == "Producer" || itemType == "Writer"), let title = title {
+                DynamicPlaceholderView(title: title, icon: (itemType?.contains("Artist") == true || itemType?.contains("Music") == true) ? "music.mic" : "person.fill", cornerRadius: cornerRadius, hideTitle: hideTitle)
+            } else if (section == .music || itemType == "MusicGenre" || itemType == "Playlist" || itemType == "MusicAlbum" || itemType == "Audio"), let title = title {
+                DynamicPlaceholderView(title: title, icon: "music.quarternote.3", cornerRadius: cornerRadius, hideTitle: hideTitle)
             } else {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(.quaternary)
@@ -106,43 +112,35 @@ struct RemoteImageView: View {
     }
 }
 
-struct BookPlaceholderView: View {
+struct DynamicPlaceholderView: View {
     let title: String
+    let icon: String
     let cornerRadius: CGFloat
+    var useSerif: Bool = false
+    var hideTitle: Bool = false
 
     var body: some View {
         ZStack {
             gradientBackground
             
             VStack(alignment: .center, spacing: 10) {
-                Image(systemName: "book.pages")
-                    .font(.system(size: 24, weight: .light))
+                Image(systemName: icon)
+                    .font(.system(size: 28, weight: .light))
                     .foregroundStyle(.white.opacity(0.4))
                 
-                Text(title)
-                    .font(.system(size: 14, weight: .bold, design: .serif))
-                    .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 12)
-                    .lineLimit(5)
-                    .minimumScaleFactor(0.7)
-                    .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                if !hideTitle {
+                    Text(title)
+                        .font(.system(size: 14, weight: .bold, design: useSerif ? .serif : .rounded))
+                        .foregroundColor(.white)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+                        .lineLimit(useSerif ? 5 : 3)
+                        .minimumScaleFactor(0.7)
+                        .shadow(color: .black.opacity(0.3), radius: 2, x: 0, y: 1)
+                }
             }
-            .padding(.vertical, 20)
         }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
-        .overlay {
-            // "Nice border" - inside stroke
-            RoundedRectangle(cornerRadius: cornerRadius)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: [.white.opacity(0.4), .white.opacity(0.1)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: 1
-                )
-        }
     }
 
     private var gradientBackground: some View {
@@ -155,34 +153,27 @@ struct BookPlaceholderView: View {
     }
 
     private func getColors(for title: String) -> [Color] {
-        // Use a simple stable hash for consistent colors per book
         var hash: UInt64 = 5381
         for byte in title.utf8 {
             hash = ((hash << 5) &+ hash) &+ UInt64(byte)
         }
         
-        // Darker color palette
         let palette: [Color] = [
-            Color(red: 0.10, green: 0.12, blue: 0.20), // Deep Navy
-            Color(red: 0.20, green: 0.08, blue: 0.08), // Dark Burgundy
-            Color(red: 0.08, green: 0.15, blue: 0.10), // Forest Green
-            Color(red: 0.15, green: 0.10, blue: 0.20), // Royal Purple
-            Color(red: 0.12, green: 0.18, blue: 0.22), // Deep Teal
-            Color(red: 0.18, green: 0.12, blue: 0.08), // Dark Chocolate
-            Color(red: 0.15, green: 0.15, blue: 0.15), // Graphite
-            Color(red: 0.25, green: 0.10, blue: 0.15), // Wine
+            Color(red: 0.10, green: 0.12, blue: 0.20),
+            Color(red: 0.20, green: 0.08, blue: 0.08),
+            Color(red: 0.08, green: 0.15, blue: 0.10),
+            Color(red: 0.15, green: 0.10, blue: 0.20),
+            Color(red: 0.12, green: 0.18, blue: 0.22),
+            Color(red: 0.18, green: 0.12, blue: 0.08),
+            Color(red: 0.15, green: 0.15, blue: 0.15),
+            Color(red: 0.25, green: 0.10, blue: 0.15)
         ]
         
         let index1 = Int(hash % UInt64(palette.count))
         let index2 = Int((hash / UInt64(palette.count)) % UInt64(palette.count))
-        
         let c1 = palette[index1]
         var c2 = palette[index2]
-        
-        if c1 == c2 {
-            c2 = palette[(index1 + 1) % palette.count]
-        }
-        
+        if c1 == c2 { c2 = palette[(index1 + 1) % palette.count] }
         return [c1, c2]
     }
 }
@@ -201,7 +192,7 @@ struct ItemPosterCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomLeading) {
-                RemoteImageView(url: imageURL, section: CacheSection.from(itemType: item.type), cornerRadius: 8, title: item.displayName)
+                RemoteImageView(url: imageURL, section: CacheSection.from(itemType: item.type), cornerRadius: 8, title: item.displayName, itemType: item.type)
                     .frame(width: width, height: width * imageRatio)
                     .clipped()
                     .liquidCard()
@@ -267,7 +258,7 @@ struct ItemBackdropCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomLeading) {
-                RemoteImageView(url: imageURL, section: CacheSection.from(itemType: item.type), cornerRadius: 10, title: item.displayName)
+                RemoteImageView(url: imageURL, section: CacheSection.from(itemType: item.type), cornerRadius: 10, title: item.displayName, itemType: item.type)
                     .frame(width: width, height: width * 9 / 16)
                     .clipped()
 

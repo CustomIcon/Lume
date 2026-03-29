@@ -144,9 +144,7 @@ struct MiniPlayerView: View {
                 }
             }
             .padding(12)
-            .background(.ultraThinMaterial)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(RoundedRectangle(cornerRadius: 16).stroke(.white.opacity(0.1), lineWidth: 0.5))
+            .glassEffect(in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .task(id: current.id) {
                 if let id = current.albumId ?? current.id {
                     currentAlbumURL = await session.apiClient.imageURL(itemId: id, imageType: "Primary", maxWidth: 200)
@@ -217,7 +215,7 @@ struct QueueView: View {
             }
             .listStyle(.plain)
         }
-        .background(.ultraThinMaterial)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 0))
     }
 }
 

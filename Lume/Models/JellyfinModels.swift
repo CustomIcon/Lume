@@ -204,6 +204,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
     let sortName: String?
     let primaryImageAspectRatio: Double?
     let providerIds: [String: String]?
+    let externalUrls: [MediaUrl]?
 
     enum CodingKeys: String, CodingKey {
         case name = "Name"
@@ -260,6 +261,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
         case sortName = "SortName"
         case primaryImageAspectRatio = "PrimaryImageAspectRatio"
         case providerIds = "ProviderIds"
+        case externalUrls = "ExternalUrls"
     }
 
     init(name: String? = nil, id: String? = nil, collectionType: String? = nil, type: String? = nil, imageTags: [String: String]? = nil) {
@@ -317,6 +319,7 @@ struct BaseItemDto: Codable, Identifiable, Hashable, Sendable {
         self.sortName = nil
         self.primaryImageAspectRatio = nil
         self.providerIds = nil
+        self.externalUrls = nil
     }
 
     static func == (lhs: BaseItemDto, rhs: BaseItemDto) -> Bool {

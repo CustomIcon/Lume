@@ -4,6 +4,7 @@ import SwiftData
 enum SettingsSection: String, CaseIterable, Identifiable {
     case general = "General"
     case appearance = "Appearance"
+    case sidebar = "Sidebar"
     case playback = "Playback"
     case storage = "Storage"
     case servers = "Servers"
@@ -15,6 +16,7 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         switch self {
         case .general: return "gear"
         case .appearance: return "paintbrush.fill"
+        case .sidebar: return "sidebar.left"
         case .playback: return "play.circle.fill"
         case .storage: return "folder.fill"
         case .servers: return "server.rack"
@@ -56,6 +58,8 @@ struct SettingsView: View {
                 GeneralSettingsView()
             case .appearance:
                 AppearanceSettingsView()
+            case .sidebar:
+                SidebarSettingsView()
             case .playback:
                 PlaybackSettingsView()
             case .storage:
@@ -160,7 +164,7 @@ struct AppearanceSettingsView: View {
         .padding(20)
         .background(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(themeManager.currentFlavor == .oled ? AnyShapeStyle(Color.black) : AnyShapeStyle(.ultraThinMaterial))
                 .overlay(
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .stroke(themeManager.currentFlavor.accentColor.opacity(0.3), lineWidth: 1.5)
@@ -298,6 +302,7 @@ struct PlaybackSettingsView: View {
     @AppStorage("defaultSubtitlesOn") private var defaultSubtitlesOn = false
     @AppStorage("resumePlayback") private var resumePlayback = true
     @AppStorage("maxStreamingBitrate") private var maxStreamingBitrate = 140
+    @AppStorage("enableSeekPreviews") private var enableSeekPreviews = true
 
     private let bitrateOptions = [
         (label: "Auto (140 Mbps)", value: 140),
@@ -335,8 +340,9 @@ struct PlaybackSettingsView: View {
                     VStack(alignment: .leading, spacing: 16) {
                         settingsRowLabel("Behavior", icon: "play.rectangle")
                         Toggle("Resume from last position", isOn: $resumePlayback)
-                        Toggle("Auto-play next episode", isOn: $autoPlayNext)
-                        Toggle("Skip intro when available", isOn: $skipIntroEnabled)
+                        Toggle("Auto-play next episode (WIP)", isOn: $autoPlayNext)
+                        Toggle("Skip intro when available (WIP)", isOn: $skipIntroEnabled)
+                        Toggle("Enable seek previews (Thumbnails)", isOn: $enableSeekPreviews)
                     }
                 }
 
@@ -384,6 +390,21 @@ struct ServerSettingsView: View {
 
     @State private var showDeleteAlert = false
     @State private var serverToDelete: ServerConfiguration?
+    
+    @State private var showSwitchAlert = false
+    @State private var switchTarget: SwitchTarget?
+    
+    enum SwitchTarget {
+        case user(UserSession)
+        case server(ServerConfiguration)
+        
+        var name: String {
+            switch self {
+            case .user(let session): return session.username
+            case .server(let server): return server.serverName
+            }
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -473,6 +494,27 @@ struct ServerSettingsView: View {
         } message: {
             Text("This will remove all account data for this server.")
         }
+        .alert("Switch to \(switchTarget?.name ?? "Target")?", isPresented: $showSwitchAlert) {
+            Button("Cancel", role: .cancel) {}
+            Button("Confirm") {
+                if let target = switchTarget {
+                    executeSwitch(target)
+                }
+            }
+        } message: {
+            Text("Switching will refresh the app and load the new libraries.")
+        }
+    }
+    
+    private func executeSwitch(_ target: SwitchTarget) {
+        Task {
+            switch target {
+            case .user(let session_):
+                await session.switchUser(to: session_)
+            case .server(let server_):
+                await session.switchServer(to: server_)
+            }
+        }
     }
 
     private func serverCard(_ server: ServerConfiguration) -> some View {
@@ -509,6 +551,15 @@ struct ServerSettingsView: View {
                     Spacer()
     
                     HStack(spacing: 8) {
+                        if !isCurrent {
+                            Button("Switch") {
+                                switchTarget = .server(server)
+                                showSwitchAlert = true
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                        }
+                        
                         Button(role: .destructive) {
                             serverToDelete = server
                             showDeleteAlert = true
@@ -548,7 +599,8 @@ struct ServerSettingsView: View {
                             
                             if !isCurrent || session.currentSession?.userID != userSession.userID {
                                 Button("Connect") {
-                                    Task { await session.switchUser(to: userSession) }
+                                    switchTarget = .user(userSession)
+                                    showSwitchAlert = true
                                 }
                                 .buttonStyle(.bordered)
                                 .controlSize(.small)
@@ -811,12 +863,117 @@ private func settingsCard<Content: View>(@ViewBuilder content: () -> Content) ->
     content()
         .padding(20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(.ultraThinMaterial)
-                .overlay(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .stroke(.primary.opacity(0.06), lineWidth: 1)
-                )
-        )
+        .background {
+            if ThemeManager.shared.currentFlavor == .oled {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(ThemeManager.shared.currentFlavor.secondaryBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(.white.opacity(0.1), lineWidth: 1)
+                    )
+            } else {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(.ultraThinMaterial)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(.primary.opacity(0.06), lineWidth: 1)
+                    )
+            }
+        }
+}
+
+struct SidebarSettingsView: View {
+    @Environment(SessionManager.self) private var session
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                settingsHeader("Sidebar", subtitle: "Customize your library order and visibility")
+
+                Text("Drag libraries to reorder them in the sidebar. Toggle the visibility of libraries you don't need.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                settingsCard {
+                    List {
+                        // Visible libraries (reorderable)
+                        Section("Shown in Sidebar") {
+                             if session.visibleLibraries.isEmpty && session.libraries.filter({ !session.hiddenLibraryIds.contains($0.id ?? "") }).isEmpty {
+                                 Text("No libraries shown.")
+                                     .foregroundStyle(.secondary)
+                                     .font(.caption)
+                             } else {
+                                 ForEach(session.visibleLibraries) { library in
+                                     HStack {
+                                         Image(systemName: iconForCollectionType(library.collectionType))
+                                             .frame(width: 24)
+                                         Text(library.displayName)
+                                         Spacer()
+                                         Button(action: { session.toggleLibraryVisibility(id: library.id ?? "") }) {
+                                             Image(systemName: "eye")
+                                                 .foregroundStyle(.secondary)
+                                         }
+                                         .buttonStyle(.plain)
+                                         
+                                         Image(systemName: "line.3.horizontal")
+                                             .foregroundStyle(.tertiary)
+                                             .padding(.leading, 8)
+                                     }
+                                     .padding(.vertical, 4)
+                                     .tag(library.id)
+                                 }
+                                 .onMove { from, to in
+                                     session.moveLibrary(from: from, to: to)
+                                 }
+                             }
+                        }
+                        
+                        // Hidden libraries
+                        let hidden = session.libraries.filter { session.hiddenLibraryIds.contains($0.id ?? "") }
+                        if !hidden.isEmpty {
+                            Section("Hidden") {
+                                ForEach(hidden) { library in
+                                    HStack {
+                                        Image(systemName: iconForCollectionType(library.collectionType))
+                                            .frame(width: 24)
+                                            .foregroundStyle(.secondary)
+                                        Text(library.displayName)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                        Button(action: { session.toggleLibraryVisibility(id: library.id ?? "") }) {
+                                            Image(systemName: "eye.slash")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                    .padding(.vertical, 4)
+                                    .tag(library.id)
+                                }
+                            }
+                        }
+                    }
+                    .listStyle(.plain)
+                    .frame(height: 500) // Fixed height within settings card
+                }
+
+                Spacer(minLength: 20)
+            }
+            .padding(.horizontal, 40)
+            .padding(.vertical, 32)
+            .frame(maxWidth: 600)
+            .frame(maxWidth: .infinity)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+    
+    private func iconForCollectionType(_ type: String?) -> String {
+        switch type {
+            case "movies": return "film"
+            case "tvshows": return "tv"
+            case "music": return "music.note"
+            case "livetv", "liverecordings", "LiveTv", "channels": return "antenna.radiowaves.left.and.right"
+            case "books": return "book"
+            default: return "folder"
+        }
+    }
 }

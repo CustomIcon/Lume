@@ -52,7 +52,7 @@ final class ExternalSubtitleService: Sendable {
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
-                print("[Subtitle] OS Search failed with status: \(http.statusCode)")
+                LumeError("[Subtitle] OS Search failed with status: \(http.statusCode)")
                 return []
             }
             
@@ -74,7 +74,7 @@ final class ExternalSubtitleService: Sendable {
                 )
             }
         } catch {
-            print("[Subtitle] OS Modern Search failed: \(error)")
+            LumeError("[Subtitle] OS Modern Search failed: \(error)")
             return []
         }
     }

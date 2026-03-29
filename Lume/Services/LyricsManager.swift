@@ -84,7 +84,7 @@ class LyricsManager {
                     return lyrics
                 }
             } catch {
-                print("Failed to fetch from \(platform): \(error)")
+                LumeError("Failed to fetch from \(platform): \(error)")
             }
         }
         

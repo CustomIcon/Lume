@@ -28,8 +28,35 @@ struct ItemDetailView: View {
                             .frame(maxWidth: .infinity)
                             .clipped()
                             .overlay {
+                                // Top Dark Fade for Readability
                                 LinearGradient(
-                                    colors: [.clear, .clear, ThemeManager.shared.currentFlavor.backgroundColor],
+                                    stops: [
+                                        .init(color: .black, location: 0.0),
+                                        .init(color: .black.opacity(0.4), location: 0.2),
+                                        .init(color: .clear, location: 0.5)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                                
+                                // Bottom Dark Fade for Atmosphere
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: .clear, location: 0.5),
+                                        .init(color: .black.opacity(0.5), location: 0.85),
+                                        .init(color: .black, location: 1.0)
+                                    ],
+                                    startPoint: .top,
+                                    endPoint: .bottom
+                                )
+                            }
+                            .mask {
+                                LinearGradient(
+                                    stops: [
+                                        .init(color: .black, location: 0.0),
+                                        .init(color: .black, location: 0.8),
+                                        .init(color: .clear, location: 1.0)
+                                    ],
                                     startPoint: .top,
                                     endPoint: .bottom
                                 )
@@ -61,11 +88,8 @@ struct ItemDetailView: View {
                                     .font(.caption)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 4)
-                                    .background(
-                                        Capsule()
-                                            .fill(.ultraThinMaterial)
-                                            .overlay(Capsule().stroke(.white.opacity(0.2), lineWidth: 0.5))
-                                    )
+                                    .padding(.vertical, 4)
+                                    .glassEffect(in: Capsule())
                             }
                         }
                         .padding(.horizontal)
@@ -134,8 +158,10 @@ struct ItemDetailView: View {
                 Spacer(minLength: 40)
             }
         }
+        .ignoresSafeArea(edges: .top)
         .navigationTitle(displayItem.displayName)
-        .toolbarBackground(.hidden)
+        .toolbarBackground(.hidden, for: .windowToolbar)
+        .toolbarBackground(.hidden, for: .automatic)
         .task { await loadDetails() }
     }
 
@@ -399,25 +425,28 @@ struct PersonCard: View {
     @State private var imageURL: URL?
 
     var body: some View {
-        VStack(spacing: 4) {
-            RemoteImageView(url: imageURL, section: .others, cornerRadius: 40)
-                .frame(width: 80, height: 80)
-                .clipShape(Circle())
+        NavigationLink(value: person) {
+            VStack(spacing: 4) {
+                RemoteImageView(url: imageURL, section: .others, cornerRadius: 40, title: person.name, itemType: person.type ?? "Person", hideTitle: true)
+                    .frame(width: 80, height: 80)
+                    .clipShape(Circle())
 
-            Text(person.name ?? "")
-                .font(.caption2)
-                .fontWeight(.medium)
-                .lineLimit(1)
-                .frame(width: 80)
-
-            if let role = person.role, !role.isEmpty {
-                Text(role)
+                Text(person.name ?? "")
                     .font(.caption2)
-                    .foregroundStyle(.secondary)
+                    .fontWeight(.medium)
                     .lineLimit(1)
                     .frame(width: 80)
+
+                if let role = person.role, !role.isEmpty {
+                    Text(role)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .frame(width: 80)
+                }
             }
         }
+        .buttonStyle(.plain)
         .task {
             if let id = person.id {
                 imageURL = await apiClient.personImageURL(personId: id, tag: person.primaryImageTag, maxWidth: 160)

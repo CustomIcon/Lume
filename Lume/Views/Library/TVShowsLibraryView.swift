@@ -137,13 +137,40 @@ struct SeriesDetailView: View {
             VStack(alignment: .leading, spacing: 0) {
                 // Backdrop header
                 ZStack(alignment: .bottomLeading) {
-                    RemoteImageView(url: backdropURL, section: .tvShows, cornerRadius: 0)
+                    RemoteImageView(url: backdropURL, section: .tvShows, cornerRadius: 0, title: series.displayName, itemType: "Series")
                         .frame(height: 300)
                         .frame(maxWidth: .infinity)
                         .clipped()
                         .overlay {
+                            // Top Dark Fade for Readability
                             LinearGradient(
-                                colors: [.clear, .clear, Color(nsColor: .windowBackgroundColor)],
+                                stops: [
+                                    .init(color: .black.opacity(0.8), location: 0.0),
+                                    .init(color: .black.opacity(0.4), location: 0.2),
+                                    .init(color: .clear, location: 0.5)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            
+                            // Bottom Dark Fade for Atmosphere
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .clear, location: 0.5),
+                                    .init(color: .black.opacity(0.5), location: 0.85),
+                                    .init(color: .black.opacity(0.9), location: 1.0)
+                                ],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        }
+                        .mask {
+                            LinearGradient(
+                                stops: [
+                                    .init(color: .black, location: 0.0),
+                                    .init(color: .black, location: 0.8),
+                                    .init(color: .clear, location: 1.0)
+                                ],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
@@ -218,8 +245,10 @@ struct SeriesDetailView: View {
                 }
             }
         }
+        .ignoresSafeArea(edges: .top)
         .navigationTitle(series.displayName)
-        .toolbarBackground(.hidden)
+        .toolbarBackground(.hidden, for: .windowToolbar)
+        .toolbarBackground(.hidden, for: .automatic)
         .task { await loadSeriesData() }
     }
 
@@ -268,7 +297,7 @@ struct EpisodeRow: View {
     var body: some View {
         HStack(spacing: 12) {
             ZStack(alignment: .bottomLeading) {
-                RemoteImageView(url: thumbURL, section: .tvShows, cornerRadius: 6)
+                RemoteImageView(url: thumbURL, section: .tvShows, cornerRadius: 6, title: episode.displayName, itemType: "Episode")
                     .frame(width: 180, height: 100)
 
                 if let progress = episode.userData?.playedPercentage, progress > 0 {

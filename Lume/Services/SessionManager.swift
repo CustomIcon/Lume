@@ -17,11 +17,85 @@ final class SessionManager {
     private(set) var currentServer: ServerConfiguration?
     private(set) var currentSession: UserSession?
     private(set) var libraries: [BaseItemDto] = []
+    private(set) var hiddenLibraryIds: Set<String> = []
+    private(set) var libraryOrder: [String] = [] // Item IDs
+    
+    var visibleLibraries: [BaseItemDto] {
+        let filtered = libraries.filter { !hiddenLibraryIds.contains($0.id ?? "") }
+        
+        // If we have a custom order, sort by it
+        if !libraryOrder.isEmpty {
+            return filtered.sorted { a, b in
+                let indexA = libraryOrder.firstIndex(of: a.id ?? "") ?? Int.max
+                let indexB = libraryOrder.firstIndex(of: b.id ?? "") ?? Int.max
+                return indexA < indexB
+            }
+        }
+        
+        return filtered
+    }
+
     private(set) var isLiveTvEnabled = false
     private(set) var isLoading = false
     private(set) var error: String?
+    private(set) var refreshCounter = 0
     var activeVideoItem: BaseItemDto?
     var activeBookItem: BaseItemDto?
+    
+    private var sidebarSettingsKey: String {
+        guard let userId = currentSession?.userID, let serverId = currentServer?.deviceID else { return "sidebar_default" }
+        return "sidebar_v2_\(userId)_\(serverId)"
+    }
+    
+    func toggleLibraryVisibility(id: String) {
+        if hiddenLibraryIds.contains(id) {
+            hiddenLibraryIds.remove(id)
+        } else {
+            hiddenLibraryIds.insert(id)
+        }
+        saveSidebarSettings()
+    }
+    
+    func moveLibrary(from source: IndexSet, to destination: Int) {
+        var ordered = visibleLibraries
+        ordered.move(fromOffsets: source, toOffset: destination)
+        
+        // Update the full libraryOrder based on the new visible order + keeping hidden ones at the end or wherever
+        // Actually, simplest is to just store the IDs of libraries in their current order
+        libraryOrder = ordered.map { $0.id ?? "" }
+        
+        // Also add hidden ones to the end if they aren't in the list?
+        // Let's just store the order of ALL libraries.
+        var fullOrder = ordered.map { $0.id ?? "" }
+        for lib in libraries {
+            if !fullOrder.contains(lib.id ?? "") {
+                fullOrder.append(lib.id ?? "")
+            }
+        }
+        libraryOrder = fullOrder
+        saveSidebarSettings()
+    }
+    
+    private func loadSidebarSettings() {
+        let key = sidebarSettingsKey
+        if let hidden = UserDefaults.standard.stringArray(forKey: "\(key)_hidden") {
+            hiddenLibraryIds = Set(hidden)
+        } else {
+            hiddenLibraryIds = []
+        }
+        
+        if let order = UserDefaults.standard.stringArray(forKey: "\(key)_order") {
+            libraryOrder = order
+        } else {
+            libraryOrder = []
+        }
+    }
+    
+    private func saveSidebarSettings() {
+        let key = sidebarSettingsKey
+        UserDefaults.standard.set(Array(hiddenLibraryIds), forKey: "\(key)_hidden")
+        UserDefaults.standard.set(libraryOrder, forKey: "\(key)_order")
+    }
     
     let downloadManager = DownloadManager()
     let apiClient: JellyfinAPIClient
@@ -57,6 +131,7 @@ final class SessionManager {
             if let server = servers.first, let session = sessions.first {
                 self.currentServer = server
                 self.currentSession = session
+                loadSidebarSettings()
                 await apiClient.configure(
                     baseURL: server.serverURL,
                     accessToken: session.accessToken,
@@ -181,6 +256,7 @@ final class SessionManager {
     }
 
     func switchServer(to server: ServerConfiguration) async {
+        triggerFullRefresh()
         LumeInfo("Switching to server: \(server.serverName) (\(server.serverURL))")
         self.currentServer = server
         
@@ -218,6 +294,7 @@ final class SessionManager {
     }
 
     func switchUser(to session: UserSession) async {
+        triggerFullRefresh()
         guard let modelContext else { return }
         LumeInfo("Switching to user: \(session.username)")
         
@@ -302,6 +379,7 @@ final class SessionManager {
     }
 
     func loadLibraries() async {
+        loadSidebarSettings()
         if isOffline {
             await loadCachedLibraries()
             return
@@ -390,6 +468,7 @@ final class SessionManager {
     }
 
     func logout() async {
+        triggerFullRefresh()
         LumeInfo("Logging out of current session.")
         if let session = currentSession {
             session.isActive = false
@@ -446,5 +525,11 @@ final class SessionManager {
         Task {
             await loadExistingSession()
         }
+    }
+    
+    func triggerFullRefresh() {
+        LumeInfo("Triggering full UI refresh.")
+        refreshCounter += 1
+        libraries = []
     }
 }

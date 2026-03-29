@@ -141,7 +141,7 @@ enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
         case .kanagawa:         return Color(hex: "2a2a37")
         case .midnight:         return Color(hex: "1a1c25")
         case .sunset:           return Color(hex: "28283e")
-        case .oled:             return Color(hex: "111111")
+        case .oled:             return Color(hex: "050505")
         }
     }
 

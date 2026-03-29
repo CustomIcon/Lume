@@ -106,7 +106,7 @@ final class MusicPlayerManager {
                             let startInfo = PlaybackStartInfo(itemId: itemId, positionTicks: ticks, playSessionId: self?.playSessionId)
                             Task { try? await session.apiClient.reportPlaybackStart(startInfo) }
                         } else if status == .failed {
-                            print("Audio Playback Error: \(String(describing: playerItem.error))")
+                            LumeError("Audio Playback Error: \(String(describing: playerItem.error))")
                             self?.isPlaying = false
                         }
                     }

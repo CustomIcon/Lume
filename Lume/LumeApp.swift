@@ -11,6 +11,7 @@ import SwiftData
 @main
 struct LumeApp: App {
     @State private var sessionManager = SessionManager()
+    @Environment(\.openWindow) private var openWindow
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -33,11 +34,13 @@ struct LumeApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .frame(minWidth: 1100, minHeight: 700)
                 .environment(sessionManager)
                 .task {
                     await sessionManager.setup(modelContext: sharedModelContainer.mainContext)
                 }
         }
+        .windowStyle(.hiddenTitleBar)
         .modelContainer(sharedModelContainer)
 
         Window("Video Player", id: "video-player") {
@@ -67,6 +70,15 @@ struct LumeApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 600, height: 850)
+
+        Window("Help Center", id: "lume-help") {
+            HelpView()
+                .environment(sessionManager)
+                .themeContainer()
+                .frame(minWidth: 850, minHeight: 600)
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 1000, height: 750)
         .commands {
             CommandGroup(replacing: .newItem) {}
 
@@ -99,6 +111,13 @@ struct LumeApp: App {
                     Task { await sessionManager.refreshLibraries() }
                 }
                 .keyboardShortcut("r", modifiers: .command)
+            }
+
+            CommandGroup(replacing: .help) {
+                Button("Lume Help") {
+                    openWindow(id: "lume-help")
+                }
+                .keyboardShortcut("/", modifiers: .command)
             }
         }
 
