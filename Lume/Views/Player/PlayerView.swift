@@ -296,15 +296,15 @@ final class PlayerViewModel {
     var externalSubtitles: [URL] = []
     var subtitleCues: [SubtitleCue] = []
     var activeCues: [SubtitleCue] = []
-    var userSelectedSubtitleIndex: Int = (UserDefaults.standard.object(forKey: "userSelectedSubtitleIndex") as? Int) ?? -999 {
-        didSet {
-            UserDefaults.standard.set(userSelectedSubtitleIndex, forKey: "userSelectedSubtitleIndex")
-        }
-    }
+    var userSelectedSubtitleIndex: Int = -999
     var subtitleScale: Int = UserDefaults.standard.integer(forKey: "subtitleScale") == 0 ? 44 : UserDefaults.standard.integer(forKey: "subtitleScale")
     var subtitleColor: String = "#FFFFFF" 
     var subtitleBgOpacity: Double = 0.0 
-    var subtitleFont: String = UserDefaults.standard.string(forKey: "subtitleFont") ?? "Inter"
+    var subtitleFont: String {
+        get { UserDefaults.standard.string(forKey: "subtitleFont") ?? "Inter" }
+        set { UserDefaults.standard.set(newValue, forKey: "subtitleFont") }
+    }
+    var subtitleOffset: Double = 0.0 // Temporary offset in seconds
     
     var isFullscreen = false
     var trickplayManifest: TrickplayManifest?
@@ -377,25 +377,35 @@ final class PlayerViewModel {
         let prefAudio = UserDefaults.standard.string(forKey: "preferredAudioLanguage") ?? "eng"
         let subsOn = UserDefaults.standard.bool(forKey: "defaultSubtitlesOn")
         
-        if let bestAudio = findBestTrack(in: vlcAudioTracks, lang: prefAudio) {
+        // Handle Audio Preservation
+        if selectedAudioIndex != -1 {
+            vlcProxy.setAudioTrack(selectedAudioIndex)
+        } else if let bestAudio = findBestTrack(in: vlcAudioTracks, lang: prefAudio) {
             vlcProxy.setAudioTrack(bestAudio.index)
             selectedAudioIndex = bestAudio.index
         } else {
             selectedAudioIndex = vlcProxy.currentAudioIndex
         }
         
-        if subsOn {
-            if let streams = item.mediaSources?.first?.mediaStreams?.filter({ $0.type == "Subtitle" }),
-               let bestSub = streams.first(where: { ($0.language?.lowercased().contains(prefSub) ?? false) || ($0.displayTitle?.lowercased().contains(prefSub) ?? false) }) ?? streams.first(where: { $0.isDefault == true }) {
-                LumeInfo("Automatched custom subtitle: \(bestSub.displayTitle ?? "Unknown")")
-                let idx = bestSub.index ?? -1
-                userSelectedSubtitleIndex = idx
-                Task { await loadJellyfinSubtitles(apiClient: apiClient, item: item, index: idx) }
+        // Handle Subtitle Preservation
+        if userSelectedSubtitleIndex != -999 {
+            // Respect existing selection (from menu or previous quality level)
+            if userSelectedSubtitleIndex != -1 && (subtitleCues.isEmpty) {
+                 Task { await loadJellyfinSubtitles(apiClient: apiClient, item: item, index: userSelectedSubtitleIndex) }
             }
         } else {
-            userSelectedSubtitleIndex = -1
-            subtitleCues = []
-            activeCues = []
+            // First time loading - apply defaults
+            if subsOn {
+                if let streams = item.mediaSources?.first?.mediaStreams?.filter({ $0.type == "Subtitle" }),
+                   let bestSub = streams.first(where: { ($0.language?.lowercased().contains(prefSub) ?? false) || ($0.displayTitle?.lowercased().contains(prefSub) ?? false) }) ?? streams.first(where: { $0.isDefault == true }) {
+                    LumeInfo("Automatched custom subtitle: \(bestSub.displayTitle ?? "Unknown")")
+                    let idx = bestSub.index ?? -1
+                    userSelectedSubtitleIndex = idx
+                    Task { await loadJellyfinSubtitles(apiClient: apiClient, item: item, index: idx) }
+                }
+            } else {
+                userSelectedSubtitleIndex = -1
+            }
         }
         
         if !vlcAudioTracks.isEmpty {
@@ -498,7 +508,8 @@ final class PlayerViewModel {
     }
     
     func updateActiveCues(at time: Double) {
-        let matching = subtitleCues.filter { time >= $0.startTime && time <= $0.endTime }
+        let adjTime = time - subtitleOffset
+        let matching = subtitleCues.filter { adjTime >= $0.startTime && adjTime <= $0.endTime }
         if matching != activeCues {
             activeCues = matching
         }
@@ -581,7 +592,12 @@ struct PlayerView: View {
     @State private var errorMessage: String?
     @AppStorage("skipIntroEnabled") private var skipIntroEnabled = true
     @State private var showSubtitleSearch = false
-
+    @State private var showSubtitleSettings = false
+    @State private var infoPosition = CGSize.zero
+    @State private var captionPosition = CGSize.zero
+    @GestureState private var infoDragOffset = CGSize.zero
+    @GestureState private var captionDragOffset = CGSize.zero
+    
     private var resolvedItem: BaseItemDto { fullItem ?? item }
 
     var body: some View {
@@ -723,7 +739,8 @@ struct PlayerView: View {
                 SubtitleOverlay(cues: vm.activeCues, vm: vm)
                     .allowsHitTesting(false)
                     .padding(.bottom, vm.showControls ? 140 : 40)
-                    .animation(.easeInOut(duration: 0.2), value: vm.activeCues)
+                    .animation(nil, value: vm.showControls)
+                    .animation(nil, value: vm.activeCues)
             }
 
             Color.black.opacity(0.001)
@@ -733,9 +750,7 @@ struct PlayerView: View {
                     isFocused = true
                     triggerControls()
                 }
-                .onTapGesture(count: 2) {
-                    toggleFullscreen()
-                }
+
                 .onTapGesture {
                     withAnimation {
                         vm.showControls.toggle()
@@ -753,7 +768,7 @@ struct PlayerView: View {
                 .opacity(vm.showControls || vm.isLoading ? 1 : 0)
                 .animation(.spring(response: 0.5, dampingFraction: 0.8), value: vm.showControls)
                 .pointerVisibility(
-                    (vm.showControls || vm.isLoading || !vm.hasStartedPlaying || showSubtitleSearch || !vm.isFullscreen)
+                    isPointerNeeded
                         ? LumePointerVisibility.visible
                         : LumePointerVisibility.hidden
                 )
@@ -833,57 +848,215 @@ struct PlayerView: View {
         .overlay {
             if vm.showInfo {
                 mediaInfoOverlay
+                    .offset(x: infoPosition.width + infoDragOffset.width, y: infoPosition.height + infoDragOffset.height)
+                    .gesture(
+                        DragGesture()
+                            .updating($infoDragOffset) { value, state, _ in
+                                state = value.translation
+                            }
+                            .onEnded { value in
+                                infoPosition.width += value.translation.width
+                                infoPosition.height += value.translation.height
+                            }
+                    )
+                    .onContinuousHover { _ in triggerControls() }
+            }
+            if showSubtitleSettings {
+                SubtitleSettingsModal(vm: vm, isPresented: $showSubtitleSettings)
+                    .offset(x: captionPosition.width + captionDragOffset.width, y: captionPosition.height + captionDragOffset.height)
+                    .gesture(
+                        DragGesture()
+                            .updating($captionDragOffset) { value, state, _ in
+                                state = value.translation
+                            }
+                            .onEnded { value in
+                                captionPosition.width += value.translation.width
+                                captionPosition.height += value.translation.height
+                            }
+                    )
+                    .onContinuousHover { _ in triggerControls() }
             }
         }
     }
 
     private var mediaInfoOverlay: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                HStack {
-                    Label("Stream Intelligence", systemImage: "info.circle.fill")
-                        .font(.headline)
-                    Spacer()
-                    Button { withAnimation { vm.showInfo = false } } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.title3)
-                    }
-                    .buttonStyle(.plain)
+            VStack(alignment: .leading, spacing: 24) {
+                overlayHeader(title: "Stream Intelligence", icon: "bolt.shield.fill") {
+                    withAnimation { vm.showInfo = false }
                 }
-                .padding(.bottom, 8)
 
-                Group {
-                    infoRow(label: "Item Name", value: resolvedItem.displayName)
-                    
-                    if vm.playURL?.isFileURL == true {
-                        infoRow(label: "Offline Storage", value: vm.playURL?.path ?? "Unknown path", mono: true)
-                        infoRow(label: "Playback Type", value: "Offline / Local Download")
-                    } else {
-                        infoRow(label: "Source ID", value: vm.mediaSourceId ?? "Unknown")
-                        infoRow(label: "Session ID", value: vm.playSessionId ?? "Unknown")
-                        Divider().opacity(0.2)
-                        infoRow(label: "Stream URL", value: vm.playURL?.absoluteString ?? "N/A", mono: true)
-                        infoRow(label: "Playback Type", value: vm.playURL?.absoluteString.contains("static=true") == true ? "Direct Play" : (vm.playURL?.absoluteString.contains("transcode") == true ? "Transcoding" : "Direct Stream"))
-                        
-                        Divider().opacity(0.2)
-                        
-                        HStack(spacing: 32) {
-                            infoRow(label: "Live Bitrate", value: formatLiveBitrate(vm.liveBitrate))
-                            infoRow(label: "Server Bitrate", value: nominalBitrateText)
-                            infoRow(label: "Dropped Frames", value: "\(vm.lostFrames)")
-                            infoRow(label: "Resolution", value: "\(Int(vm.vlcProxy.videoSize.width))x\(Int(vm.vlcProxy.videoSize.height))")
+                playbackInfoSection
+                Divider().opacity(0.1)
+                videoPerformanceSection
+                Divider().opacity(0.1)
+                originalMediaSection
+            }
+            .padding(32)
+        }
+        .frame(width: 580)
+        .frame(maxHeight: 650)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .shadow(color: .black.opacity(0.3), radius: 20)
+        .transition(.asymmetric(
+            insertion: .scale(scale: 0.95).combined(with: .opacity),
+            removal: .scale(scale: 0.95).combined(with: .opacity)
+        ))
+    }
+
+    @ViewBuilder
+    private func overlayHeader(title: String, icon: String, onClose: @escaping () -> Void) -> some View {
+        HStack {
+            Label(title, systemImage: icon)
+                .font(.system(size: 20, weight: .bold, design: .rounded))
+            Spacer()
+            Button(action: { withAnimation(.modalSpring) { onClose() } }) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+                    .font(.title3)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.bottom, 4)
+    }
+
+    private var playbackInfoSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("PLAYBACK INFORMATION", color: .blue)
+            Grid(alignment: .leading, horizontalSpacing: 40, verticalSpacing: 10) {
+                GridRow {
+                    infoItem(label: "Player", value: "Lume / LibVLC")
+                    infoItem(label: "Play method", value: playMethod)
+                }
+                GridRow {
+                    infoItem(label: "Protocol", value: vm.playURL?.scheme?.uppercased() ?? "HTTPS")
+                    infoItem(label: "Stream type", value: "Video")
+                }
+            }
+            
+            HStack(spacing: 12) {
+                Text(vm.playURL?.absoluteString ?? "N/A")
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(.white.opacity(0.5))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(.white.opacity(0.06))
+                    .cornerRadius(8)
+                
+                Button {
+                    let pb = NSPasteboard.general
+                    pb.clearContents()
+                    pb.setString(vm.playURL?.absoluteString ?? "N/A", forType: .string)
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc.fill")
+                        .font(.system(size: 12, weight: .bold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 10)
+                        .background(.blue.opacity(0.15))
+                        .foregroundStyle(.blue)
+                        .cornerRadius(8)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    private var videoPerformanceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionHeader("VIDEO PERFORMANCE", color: .orange)
+            Grid(alignment: .leading, horizontalSpacing: 40, verticalSpacing: 10) {
+                GridRow {
+                    infoItem(label: "Window size", value: "\(Int(vm.vlcProxy.videoSize.width))x\(Int(vm.vlcProxy.videoSize.height))")
+                    infoItem(label: "Resolution", value: streamResolution)
+                }
+                GridRow {
+                    infoItem(label: "Dropped frames", value: "\(vm.lostFrames)")
+                    infoItem(label: "Live bitrate", value: formatLiveBitrate(vm.liveBitrate))
+                }
+            }
+        }
+    }
+
+    private var originalMediaSection: some View {
+        Group {
+            if let source = resolvedItem.mediaSources?.first(where: { $0.id == vm.mediaSourceId }) ?? resolvedItem.mediaSources?.first {
+                let streams = source.mediaStreams ?? []
+                let audioStream = streams.first(where: { $0.type == "Audio" && ($0.index ?? -1) == vm.selectedAudioIndex }) ?? streams.first(where: { $0.type == "Audio" })
+                VStack(alignment: .leading, spacing: 12) {
+                    sectionHeader("ORIGINAL MEDIA SPECIFICATIONS", color: .green)
+                    Grid(alignment: .leading, horizontalSpacing: 40, verticalSpacing: 10) {
+                        GridRow {
+                            infoItem(label: "Container", value: source.container?.uppercased() ?? "MKV")
+                            infoItem(label: "Total size", value: formatSize(source.size))
+                        }
+                        GridRow {
+                            infoItem(label: "Nominal bitrate", value: formatBitrate(source.bitrate))
+                            if let video = streams.first(where: { $0.type == "Video" }) {
+                                infoItem(label: "Video codec", value: video.codec?.uppercased() ?? "H264")
+                            }
+                        }
+                        if let audio = audioStream {
+                            GridRow {
+                                infoItem(label: "Audio codec", value: audio.codec?.uppercased() ?? "AAC")
+                                infoItem(label: "Audio channels", value: "\(audio.channels ?? 2)")
+                            }
+                            GridRow {
+                                infoItem(label: "Audio bitrate", value: formatBitrate(audio.bitRate))
+                                infoItem(label: "Container", value: source.container?.uppercased() ?? "MKV")
+                            }
                         }
                     }
                 }
             }
-            .padding(30)
         }
-        .frame(width: 500)
-        .frame(maxHeight: 600)
-        .glassEffect(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: .black.opacity(0.3), radius: 20)
-        .transition(.scale.combined(with: .opacity))
+    }
+
+    private func sectionHeader(_ text: String, color: Color) -> some View {
+        Text(text)
+            .font(.system(size: 11, weight: .bold))
+            .foregroundStyle(color)
+    }
+
+    private func infoItem(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label)
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(.white.opacity(0.4))
+            Text(value)
+                .font(.system(size: 13, weight: .semibold, design: .rounded))
+                .foregroundStyle(.white.opacity(0.9))
+        }
+    }
+    
+    private var playMethod: String {
+        if vm.playURL?.isFileURL == true { return "Direct Play (Local)" }
+        let url = vm.playURL?.absoluteString ?? ""
+        if url.contains("static=true") { return "Direct Play" }
+        if url.contains("transcoding") || url.contains("Transcode") { return "Transcoding" }
+        return "Direct Stream"
+    }
+    
+    private var streamResolution: String {
+        guard let source = resolvedItem.mediaSources?.first(where: { $0.id == vm.mediaSourceId }) ?? resolvedItem.mediaSources?.first,
+              let video = source.mediaStreams?.first(where: { $0.type == "Video" }) else { return "Unknown" }
+        return "\(video.width ?? 0)x\(video.height ?? 0)"
+    }
+    
+    private func formatSize(_ bytes: Int64?) -> String {
+        guard let bytes else { return "Unknown" }
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useAll]
+        formatter.countStyle = .file
+        return formatter.string(fromByteCount: bytes)
+    }
+    
+    private func formatBitrate(_ bps: Int?) -> String {
+        guard let unwrapped = bps else { return "Unknown" }
+        return String(format: "%.1f Mbps", Double(unwrapped) / 1_000_000.0)
     }
 
     private var nominalBitrateText: String {
@@ -1155,13 +1328,12 @@ struct PlayerView: View {
                     if vm.userSelectedSubtitleIndex != -1 {
                         Divider().frame(height: 20).background(.white.opacity(0.12)).padding(.horizontal, 4)
                         
-                        Menu {
-                            subtitleStyleMenu
-                        } label: {
+                        Button { withAnimation(.modalSpring) { showSubtitleSettings = true } } label: {
                             Image(systemName: "textformat.size")
                                 .font(.system(size: 15, weight: .bold))
                                 .padding(.horizontal, 14)
                                 .padding(.vertical, 10)
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .help("Subtitle Styling")
@@ -1180,7 +1352,7 @@ struct PlayerView: View {
                 .glassEffect(in: Capsule())
                 .help(vm.isFullscreen ? "Exit Fullscreen" : "Full Screen")
 
-                Button { withAnimation { vm.showInfo.toggle() } } label: {
+                Button { withAnimation(.modalSpring) { vm.showInfo.toggle() } } label: {
                     Image(systemName: "info.circle")
                         .font(.system(size: 15, weight: .bold))
                         .foregroundStyle(.white)
@@ -1247,37 +1419,37 @@ struct PlayerView: View {
                         .glassEffect(in: Circle())
                     }
 
-                    HStack(spacing: 30) {
+                    HStack(spacing: 20) {
                         Button { vm.currentPlaybackTime = vm.vlcProxy.jumpBackward(Duration.seconds(10)) } label: {
                             Image(systemName: "gobackward.10")
-                                .font(.title2)
+                                .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(.white)
-                                .frame(width: 44, height: 44)
+                                .frame(width: 32, height: 32)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
 
                         Button { togglePlay() } label: {
                             Image(systemName: vm.isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 44))
+                                .font(.system(size: 22))
                                 .foregroundStyle(.white)
-                                .shadow(color: .white.opacity(0.4), radius: 10)
-                                .frame(width: 64, height: 64)
+                                .shadow(color: .white.opacity(0.3), radius: 6)
+                                .frame(width: 48, height: 48)
                                 .contentShape(Circle())
                         }
                         .buttonStyle(.plain)
 
                         Button { vm.currentPlaybackTime = vm.vlcProxy.jumpForward(Duration.seconds(10)) } label: {
                             Image(systemName: "goforward.10")
-                                .font(.title2)
+                                .font(.system(size: 14, weight: .bold))
                                 .foregroundStyle(.white)
-                                .frame(width: 44, height: 44)
+                                .frame(width: 32, height: 32)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 30)
-                    .padding(.vertical, 15)
+                    .padding(.horizontal, 22)
+                    .padding(.vertical, 8)
                     .glassEffect(in: Capsule())
 
                     if resolvedItem.type == "Episode", let next = vm.nextItem {
@@ -1369,28 +1541,10 @@ struct PlayerView: View {
         .buttonStyle(.plain)
     }
 
-    @ViewBuilder
-    private var subtitleStyleMenu: some View {
-        Section("Size") {
-            Button("Tiny") { updateSize(24) }
-            Button("Small") { updateSize(32) }
-            Button("Standard") { updateSize(44) }
-            Button("Large") { updateSize(64) }
-            Button("Extra Large") { updateSize(80) }
-            Button("Massive") { updateSize(120) }
-        }
-        
-        Section("Color") {
-            Button("White") { vm.subtitleColor = "#FFFFFF" }
-            Button("Yellow") { vm.subtitleColor = "#FFFF00" }
-            Button("Cyan") { vm.subtitleColor = "#00FFFF" }
-            Button("Green") { vm.subtitleColor = "#00FF00" }
-        }
-        
-        Section("Background") {
-            Button("None") { vm.subtitleBgOpacity = 0.0 }
-            Button("Black") { vm.subtitleBgOpacity = 0.85 }
-        }
+    private var isPointerNeeded: Bool {
+        if vm.isLoading || !vm.hasStartedPlaying || !vm.isFullscreen { return true }
+        if vm.showControls || showSubtitleSearch || showSubtitleSettings || vm.showInfo { return true }
+        return false
     }
 
     @ViewBuilder
@@ -1511,6 +1665,7 @@ struct PlayerView: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
+            .contentShape(Capsule())
             .glassEffect(in: Capsule())
         }
         .buttonStyle(.plain)
@@ -1742,7 +1897,7 @@ struct SubtitleOverlay: View {
             Spacer()
             ForEach(cues) { cue in
                 Text(cue.text)
-                    .font(.system(size: CGFloat(vm.subtitleScale), weight: .bold, design: .rounded))
+                    .font(subtitleFont(size: CGFloat(vm.subtitleScale)))
                     .foregroundStyle(Color(hex: vm.subtitleColor))
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 16)
@@ -1759,6 +1914,18 @@ struct SubtitleOverlay: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.bottom, 20)
+    }
+
+    private func subtitleFont(size: CGFloat) -> Font {
+        switch vm.subtitleFont {
+        case "Rounded": return .system(size: size, weight: .bold, design: .rounded)
+        case "Mono": return .system(size: size, weight: .bold, design: .monospaced)
+        case "Serif": return .system(size: size, weight: .bold, design: .serif)
+        case "Roboto", "Outfit", "Inter":
+            return .custom(vm.subtitleFont, size: size).bold()
+        default:
+            return .system(size: size, weight: .bold)
+        }
     }
 }
 
@@ -1891,3 +2058,176 @@ public enum SubtitleParser {
 }
 
 
+
+struct SubtitleSettingsModal: View {
+    @Bindable var vm: PlayerViewModel
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 24) {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Subtitle Configuration")
+                            .font(.system(size: 20, weight: .bold, design: .rounded))
+                        Text("Fine-tune your visual experience")
+                            .font(.system(size: 12, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.5))
+                    }
+                    Spacer()
+                    Button { withAnimation(.modalSpring) { isPresented = false } } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.bottom, 10)
+
+                VStack(alignment: .leading, spacing: 20) {
+                    // Offset Setting
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Label("Synchronization Offset", systemImage: "clock.arrow.2.circlepath")
+                                .font(.headline)
+                                .fontDesign(.rounded)
+                            Spacer()
+                            Text("\(String(format: "%.1f", vm.subtitleOffset))s")
+                                .font(.system(.body, design: .monospaced))
+                                .foregroundStyle(.blue)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.blue.opacity(0.1))
+                                .cornerRadius(6)
+                        }
+                        
+                        HStack(spacing: 15) {
+                            Button { vm.subtitleOffset -= 0.1 } label: { Image(systemName: "minus.circle.fill").font(.title3) }
+                            Slider(value: $vm.subtitleOffset, in: -10...10, step: 0.1)
+                                .accentColor(.blue)
+                            Button { vm.subtitleOffset += 0.1 } label: { Image(systemName: "plus.circle.fill").font(.title3) }
+                            
+                            Button { vm.subtitleOffset = 0 } label: {
+                                Text("Reset").font(.caption.bold())
+                                    .padding(.horizontal, 10)
+                                    .padding(.vertical, 5)
+                                    .background(.white.opacity(0.1))
+                                    .cornerRadius(6)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        
+                        Text("Positive moves subtitles later, negative moves them earlier.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.white.opacity(0.4))
+                    }
+                    
+                    Divider().opacity(0.1)
+
+                    // Size Setting
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Label("Display Size", systemImage: "textformat.size")
+                                .font(.headline)
+                                .fontDesign(.rounded)
+                            Spacer()
+                            Text("\(vm.subtitleScale)px")
+                                .font(.caption.monospaced())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(.white.opacity(0.1))
+                                .cornerRadius(6)
+                        }
+                        Slider(value: Binding(get: { Double(vm.subtitleScale) }, set: { vm.subtitleScale = Int($0) }), in: 16...120, step: 1)
+                            .accentColor(.white)
+                    }
+
+                    Divider().opacity(0.1)
+
+                    // Font Selection
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Typeface", systemImage: "text.cursor")
+                            .font(.headline)
+                            .fontDesign(.rounded)
+                        Picker("", selection: $vm.subtitleFont) {
+                            Text("Inter").tag("Inter")
+                            Text("Roboto").tag("Roboto")
+                            Text("Outfit").tag("Outfit")
+                            Text("Rounded").tag("Rounded")
+                            Text("Mono").tag("Mono")
+                        }
+                        .pickerStyle(.segmented)
+                    }
+
+                    Divider().opacity(0.1)
+
+                    HStack(alignment: .top, spacing: 30) {
+                        // Color Selection
+                        VStack(alignment: .leading, spacing: 12) {
+                            Label("Color", systemImage: "paintbrush.fill")
+                                .font(.headline)
+                                .fontDesign(.rounded)
+                            HStack(spacing: 12) {
+                                ColorCircle(color: .white, hex: "#FFFFFF", current: vm.subtitleColor) { vm.subtitleColor = "#FFFFFF" }
+                                ColorCircle(color: .yellow, hex: "#FFFF00", current: vm.subtitleColor) { vm.subtitleColor = "#FFFF00" }
+                                ColorCircle(color: .cyan, hex: "#00FFFF", current: vm.subtitleColor) { vm.subtitleColor = "#00FFFF" }
+                                ColorCircle(color: .green, hex: "#00FF00", current: vm.subtitleColor) { vm.subtitleColor = "#00FF00" }
+                            }
+                        }
+                        
+                        Spacer()
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            Label("Opacity", systemImage: "square.stack.3d.up.fill")
+                                .font(.headline)
+                                .fontDesign(.rounded)
+                            Picker("", selection: $vm.subtitleBgOpacity) {
+                                Text("None").tag(0.0)
+                                Text("Black").tag(0.85)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 140)
+                        }
+                    }
+                }
+            }
+            .padding(32)
+        }
+        .frame(width: 500)
+        .frame(maxHeight: 600)
+        .glassEffect(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .frame(width: 500)
+        .liquidPanel()
+        .shadow(color: .black.opacity(0.3), radius: 20)
+        .transition(.asymmetric(
+            insertion: .scale(scale: 0.95).combined(with: .opacity),
+            removal: .scale(scale: 0.95).combined(with: .opacity)
+        ))
+    }
+}
+
+struct ColorCircle: View {
+    let color: Color
+    let hex: String
+    let current: String
+    let action: () -> Void
+    
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 28, height: 28)
+            .overlay(
+                Circle()
+                    .stroke(.blue, lineWidth: hex == current ? 3 : 0)
+                    .padding(-4)
+            )
+            .shadow(color: color.opacity(0.3), radius: 4)
+            .onTapGesture {
+                withAnimation { action() }
+            }
+    }
+}
+
+extension Animation {
+    static let modalSpring = Animation.spring(response: 0.32, dampingFraction: 0.82)
+}
