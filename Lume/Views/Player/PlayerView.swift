@@ -50,6 +50,7 @@ struct VLCTrackInfo: Identifiable, Hashable {
 struct VLCVideoPlayer: NSViewRepresentable {
     let url: URL
     let mediaOptions: [String] // subtitle options, etc.
+    let externalSubtitles: [URL]
     @Binding var proxy: Proxy
     let onSecondsUpdated: (Double, Double) -> Void
     let onStateUpdated: (VLCMediaPlayerState) -> Void
@@ -75,6 +76,9 @@ struct VLCVideoPlayer: NSViewRepresentable {
         }
 
         func mediaPlayerStateChanged(_ aNotification: Notification) {
+            if mediaPlayer.state == .playing || mediaPlayer.state == .opening || mediaPlayer.state == .buffering {
+                mediaPlayer.currentVideoSubTitleIndex = -1
+            }
             parent.onStateUpdated(mediaPlayer.state)
         }
     }
@@ -96,7 +100,7 @@ struct VLCVideoPlayer: NSViewRepresentable {
             }
             return d
         })
-        context.coordinator.mediaPlayer.media = media
+        context.coordinator.mediaPlayer.currentVideoSubTitleIndex = -1
         context.coordinator.mediaPlayer.play()
 
         return view
@@ -116,7 +120,9 @@ struct VLCVideoPlayer: NSViewRepresentable {
                 }
                 return d
             })
+            
             context.coordinator.mediaPlayer.media = media
+            context.coordinator.mediaPlayer.currentVideoSubTitleIndex = -1
             context.coordinator.mediaPlayer.play()
         }
     }
@@ -173,6 +179,11 @@ struct VLCVideoPlayer: NSViewRepresentable {
         }
 
         var videoSize: CGSize { mediaPlayer?.videoSize ?? .zero }
+
+        var stats: VLCMedia.Stats? {
+            guard let player = mediaPlayer, let media = player.media else { return nil }
+            return media.statistics
+        }
 
         func setSubtitleTrack(_ index: Int32) {
             mediaPlayer?.currentVideoSubTitleIndex = index
@@ -282,9 +293,17 @@ final class PlayerViewModel {
     var currentPosition: Int64 = 0
     var hasStartedPlaying = false
     var tracksLoaded = false
-    var subtitleScale: Int = UserDefaults.standard.integer(forKey: "subtitleScale") == 0 ? 76 : UserDefaults.standard.integer(forKey: "subtitleScale")
-    var subtitleColor: String = UserDefaults.standard.string(forKey: "subtitleColor") ?? "#FFFFFF"
-    var subtitleBgOpacity: Double = UserDefaults.standard.double(forKey: "subtitleBgOpacity") == 0 ? 0.0 : UserDefaults.standard.double(forKey: "subtitleBgOpacity")
+    var externalSubtitles: [URL] = []
+    var subtitleCues: [SubtitleCue] = []
+    var activeCues: [SubtitleCue] = []
+    var userSelectedSubtitleIndex: Int = (UserDefaults.standard.object(forKey: "userSelectedSubtitleIndex") as? Int) ?? -999 {
+        didSet {
+            UserDefaults.standard.set(userSelectedSubtitleIndex, forKey: "userSelectedSubtitleIndex")
+        }
+    }
+    var subtitleScale: Int = UserDefaults.standard.integer(forKey: "subtitleScale") == 0 ? 44 : UserDefaults.standard.integer(forKey: "subtitleScale")
+    var subtitleColor: String = "#FFFFFF" 
+    var subtitleBgOpacity: Double = 0.0 
     var subtitleFont: String = UserDefaults.standard.string(forKey: "subtitleFont") ?? "Inter"
     
     var isFullscreen = false
@@ -293,6 +312,9 @@ final class PlayerViewModel {
     var cachedToken: String?
     var hasResumed = false
     var showInfo = false
+    var liveBitrate: Float = 0
+    var lostFrames: Int32 = 0
+    var seekToOnPlay: Double? = nil
 
     var volume: Int32 = 100 {
         didSet {
@@ -345,21 +367,16 @@ final class PlayerViewModel {
     func loadTracksFromVLC(apiClient: JellyfinAPIClient, item: BaseItemDto) async {
         guard !tracksLoaded else { return }
         
-        // First, attach all external/Jellyfin subtitles so VLC sees them
-        await attachSubtitles(apiClient: apiClient, item: item)
-        
-        // VLC needs a tiny moment to register the newly slaved subtitle tracks
-        try? await Task.sleep(nanoseconds: 500_000_000) // 0.5s
+        // VLC needs time to register all tracks, especially on HLS
+        try? await Task.sleep(nanoseconds: 1_200_000_000) // 1.2s
         
         vlcSubtitleTracks = vlcProxy.subtitleTracks
         vlcAudioTracks = vlcProxy.audioTracks
         
-        // 1. Resolve preferred languages from settings
         let prefSub = UserDefaults.standard.string(forKey: "preferredSubLanguage") ?? "eng"
         let prefAudio = UserDefaults.standard.string(forKey: "preferredAudioLanguage") ?? "eng"
         let subsOn = UserDefaults.standard.bool(forKey: "defaultSubtitlesOn")
         
-        // 2. Automatch Audio
         if let bestAudio = findBestTrack(in: vlcAudioTracks, lang: prefAudio) {
             vlcProxy.setAudioTrack(bestAudio.index)
             selectedAudioIndex = bestAudio.index
@@ -367,22 +384,21 @@ final class PlayerViewModel {
             selectedAudioIndex = vlcProxy.currentAudioIndex
         }
         
-        // 3. Automatch Subtitles (only if requested in settings or default on)
         if subsOn {
-            if let bestSub = findBestTrack(in: vlcSubtitleTracks, lang: prefSub) {
-            LumeInfo("Automatched subtitle: \(bestSub.name)")
-                vlcProxy.setSubtitleTrack(bestSub.index)
-                selectedSubtitleIndex = bestSub.index
-            } else {
-                selectedSubtitleIndex = vlcProxy.currentSubtitleIndex
+            if let streams = item.mediaSources?.first?.mediaStreams?.filter({ $0.type == "Subtitle" }),
+               let bestSub = streams.first(where: { ($0.language?.lowercased().contains(prefSub) ?? false) || ($0.displayTitle?.lowercased().contains(prefSub) ?? false) }) ?? streams.first(where: { $0.isDefault == true }) {
+                LumeInfo("Automatched custom subtitle: \(bestSub.displayTitle ?? "Unknown")")
+                let idx = bestSub.index ?? -1
+                userSelectedSubtitleIndex = idx
+                Task { await loadJellyfinSubtitles(apiClient: apiClient, item: item, index: idx) }
             }
         } else {
-            // Default to off if settings say so, but still detect current for UI
-            vlcProxy.setSubtitleTrack(-1)
-            selectedSubtitleIndex = -1
+            userSelectedSubtitleIndex = -1
+            subtitleCues = []
+            activeCues = []
         }
         
-        if !vlcSubtitleTracks.isEmpty || !vlcAudioTracks.isEmpty {
+        if !vlcAudioTracks.isEmpty {
             tracksLoaded = true
         }
     }
@@ -406,35 +422,85 @@ final class PlayerViewModel {
         }
     }
 
-    func attachSubtitles(apiClient: JellyfinAPIClient, item: BaseItemDto) async {
+    func getExternalSubtitles(apiClient: JellyfinAPIClient, item: BaseItemDto) async -> [URL] {
         let base = await apiClient.getBaseURL()
         let token = await apiClient.getAccessToken()
         
-        cachedBaseURL = base
-        cachedToken = token
-        
+        var urls: [URL] = []
         let mediaSource = item.mediaSources?.first { $0.id == mediaSourceId } ?? item.mediaSources?.first
         
-        guard let sourceId = mediaSource?.id, let streams = mediaSource?.mediaStreams else { return }
+        guard let sourceId = mediaSource?.id, let streams = mediaSource?.mediaStreams else { return [] }
         
         for stream in streams where stream.type == "Subtitle" {
-            // If it has a delivery URL or is an external track, attach it to VLC
             if let delivery = stream.deliveryUrl {
                 let full = base + delivery + (delivery.contains("?") ? "&api_key=\(token ?? "")" : "?api_key=\(token ?? "")")
                 if let url = URL(string: full) {
-                LumeDebug("Attaching subtitle: \(stream.displayTitle ?? "Unknown") -> \(full)")
-                    vlcProxy.addSubtitle(url: url)
+                    LumeDebug("Discovered external subtitle: \(stream.displayTitle ?? "Unknown")")
+                    urls.append(url)
                 }
             } else if stream.isExternal == true || stream.isTextSubtitleStream == true {
-                // Fallback: construct standard Jellyfin subtitle stream URL
                 let codec = stream.codec ?? "srt"
                 let idx = stream.index ?? 0
                 let urlString = "\(base)/Videos/\(item.id ?? "")/\(sourceId)/Subtitles/\(idx)/0/Stream.\(codec)?api_key=\(token ?? "")"
                 if let url = URL(string: urlString) {
-                    LumeDebug("Attaching fallback subtitle: \(urlString)")
-                    vlcProxy.addSubtitle(url: url)
+                    LumeDebug("Discovered fallback subtitle: \(stream.displayTitle ?? "Unknown")")
+                    urls.append(url)
                 }
             }
+        }
+        return urls
+    }
+    
+    func loadJellyfinSubtitles(apiClient: JellyfinAPIClient, item: BaseItemDto, index: Int) async {
+        guard index != -1 else {
+            subtitleCues = []
+            activeCues = []
+            return
+        }
+        
+        let base = await apiClient.getBaseURL()
+        let token = await apiClient.getAccessToken()
+        let sourceId = item.mediaSources?.first?.id ?? item.id ?? ""
+        
+        // We will try several common Jellyfin paths for subtitle streams
+        let possiblePaths = [
+            "\(base)/Videos/\(item.id ?? "")/\(sourceId)/Subtitles/\(index)/Stream.vtt?api_key=\(token ?? "")",
+            "\(base)/Videos/\(item.id ?? "")/\(sourceId)/Subtitles/\(index)/0/Stream.vtt?api_key=\(token ?? "")",
+            "\(base)/Videos/\(item.id ?? "")/Subtitles/\(index)/Stream.vtt?api_key=\(token ?? "")"
+        ]
+        
+        for urlString in possiblePaths {
+            guard let url = URL(string: urlString) else { continue }
+            LumeDebug("Trying custom subtitle fetch: \(urlString)")
+            
+            do {
+                let (data, response) = try await URLSession.shared.data(from: url)
+                guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+                    continue
+                }
+                
+                if let content = String(data: data, encoding: .utf8) {
+                    let parsed = SubtitleParser.parse(content)
+                    if !parsed.isEmpty {
+                        LumeInfo("Found and parsed \(parsed.count) cues from \(urlString)")
+                        await MainActor.run {
+                            subtitleCues = parsed
+                        }
+                        return // SUCCESS
+                    }
+                }
+            } catch {
+                LumeError("Failed to fetch path \(urlString): \(error)")
+            }
+        }
+        
+        LumeError("Could not fetch subtitles for item \(item.id ?? "") at index \(index) using any known path.")
+    }
+    
+    func updateActiveCues(at time: Double) {
+        let matching = subtitleCues.filter { time >= $0.startTime && time <= $0.endTime }
+        if matching != activeCues {
+            activeCues = matching
         }
     }
 
@@ -543,14 +609,26 @@ struct PlayerView: View {
                 VLCVideoPlayer(
                     url: playURL, 
                     mediaOptions: [
-                        "sub-ass-override=1"
+                        "sub-track=-1",
+                        "no-sub-autodetect-file",
+                        "no-sub-autodetect-fuzzy",
+                        "no-sub-margin",
+                        "video-title-show=0"
                     ],
+                    externalSubtitles: vm.externalSubtitles,
                     proxy: $vm.vlcProxy
                 ) { seconds, duration in
                     guard !vm.isDraggingSlider else { return }
                     vm.currentPlaybackTime = seconds
                     vm.duration = duration
+                    vm.updateActiveCues(at: seconds)
                     vm.checkIntroVisibility(currentTime: seconds)
+                    
+                    if let stats = vm.vlcProxy.stats {
+                        let rawBitrate = max(stats.inputBitrate, stats.demuxBitrate)
+                        vm.liveBitrate = rawBitrate
+                        vm.lostFrames = stats.lostPictures
+                    }
                 } onStateUpdated: { state in
                     switch state {
                     case .opening:
@@ -569,8 +647,14 @@ struct PlayerView: View {
                         vm.isLoading = false
                         vm.vlcProxy.setSubtitleScale(vm.subtitleScale)
                         
-                        // Resume from last position if possible
-                        if resumePlayback && !vm.hasResumed {
+                        // Resume from requested position or last position
+                        if let manualSeek = vm.seekToOnPlay {
+                            LumeInfo("Resuming from manual position: \(manualSeek)s")
+                            vm.vlcProxy.setSeconds(Duration.seconds(manualSeek))
+                            vm.currentPlaybackTime = manualSeek
+                            vm.seekToOnPlay = nil
+                            vm.hasResumed = true
+                        } else if resumePlayback && !vm.hasResumed {
                             if let ticks = resolvedItem.userData?.playbackPositionTicks, ticks > 0 {
                                 let seconds = Double(ticks) / 10_000_000.0
                                 LumeInfo("Resuming from saved position: \(seconds)s")
@@ -634,6 +718,12 @@ struct PlayerView: View {
                     UserDefaults.standard.set(n, forKey: "subtitleBgOpacity")
                 }
                 .zIndex(0)
+                
+                // Custom Subtitle Overlay
+                SubtitleOverlay(cues: vm.activeCues, vm: vm)
+                    .allowsHitTesting(false)
+                    .padding(.bottom, vm.showControls ? 140 : 40)
+                    .animation(.easeInOut(duration: 0.2), value: vm.activeCues)
             }
 
             Color.black.opacity(0.001)
@@ -775,6 +865,15 @@ struct PlayerView: View {
                         Divider().opacity(0.2)
                         infoRow(label: "Stream URL", value: vm.playURL?.absoluteString ?? "N/A", mono: true)
                         infoRow(label: "Playback Type", value: vm.playURL?.absoluteString.contains("static=true") == true ? "Direct Play" : (vm.playURL?.absoluteString.contains("transcode") == true ? "Transcoding" : "Direct Stream"))
+                        
+                        Divider().opacity(0.2)
+                        
+                        HStack(spacing: 32) {
+                            infoRow(label: "Live Bitrate", value: formatLiveBitrate(vm.liveBitrate))
+                            infoRow(label: "Server Bitrate", value: nominalBitrateText)
+                            infoRow(label: "Dropped Frames", value: "\(vm.lostFrames)")
+                            infoRow(label: "Resolution", value: "\(Int(vm.vlcProxy.videoSize.width))x\(Int(vm.vlcProxy.videoSize.height))")
+                        }
                     }
                 }
             }
@@ -785,6 +884,12 @@ struct PlayerView: View {
         .glassEffect(in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .shadow(color: .black.opacity(0.3), radius: 20)
         .transition(.scale.combined(with: .opacity))
+    }
+
+    private var nominalBitrateText: String {
+        guard let source = resolvedItem.mediaSources?.first(where: { $0.id == vm.mediaSourceId }) ?? resolvedItem.mediaSources?.first,
+              let bitrate = source.bitrate else { return "Unknown" }
+        return String(format: "%.2f Mbps", Double(bitrate) / 1_000_000.0)
     }
 
     private func infoRow(label: String, value: String, mono: Bool = false) -> some View {
@@ -806,7 +911,7 @@ struct PlayerView: View {
         }
     }
 
-    private func prepareAndPlay() async {
+    private func prepareAndPlay(resumeAt: Double? = nil) async {
         guard let itemId = item.id else {
             errorMessage = "Invalid item — no ID"
             return
@@ -815,6 +920,10 @@ struct PlayerView: View {
         vm.isLoading = true
         vm.statusMessage = "Checking local storage..."
         errorMessage = nil
+        
+        if let resumeAt {
+            vm.seekToOnPlay = resumeAt
+        }
 
         // 1. Check for local download
         if let localURL = session.downloadManager.getLocalURL(for: itemId) {
@@ -846,6 +955,9 @@ struct PlayerView: View {
                 LumeError("Failed to fetch item details: \(error)")
             }
         }
+        
+        // NOW PRE-COLLECT SUBTITLES WITH RICH DATA
+        vm.externalSubtitles = await vm.getExternalSubtitles(apiClient: session.apiClient, item: resolvedItem)
 
         let base = await session.apiClient.getBaseURL()
         let token = await session.apiClient.getAccessToken()
@@ -856,6 +968,23 @@ struct PlayerView: View {
         // If 0 or 140, treat as "Auto/Highest"
         let maxBitrate = (maxBitrateMbps == 0 || maxBitrateMbps == 140) ? 140_000_000 : (maxBitrateMbps * 1_000_000)
         let effectiveBitrate = preferDirectPlay ? 140_000_000 : maxBitrate
+        
+        let preferredSubLang = UserDefaults.standard.string(forKey: "preferredSubLanguage") ?? "eng"
+        let defaultSubIndex = resolvedItem.mediaSources?.first?.mediaStreams?.first(where: { 
+            $0.type == "Subtitle" && ($0.language == preferredSubLang || $0.language == "und")
+        })?.index
+        
+        var subIndex: Int? = nil
+        if vm.userSelectedSubtitleIndex != -1 && vm.userSelectedSubtitleIndex != -999 {
+            subIndex = vm.userSelectedSubtitleIndex
+        } else if UserDefaults.standard.bool(forKey: "defaultSubtitlesOn") {
+            subIndex = defaultSubIndex
+        }
+        
+        // Load custom subtitle parser data
+        if let effectiveIdx = subIndex {
+            Task { await vm.loadJellyfinSubtitles(apiClient: session.apiClient, item: resolvedItem, index: effectiveIdx) }
+        }
 
         vm.statusMessage = "Negotiating stream..."
         do {
@@ -863,7 +992,7 @@ struct PlayerView: View {
                 itemId: itemId,
                 mediaSourceId: mediaSourceId,
                 audioStreamIndex: nil,
-                subtitleStreamIndex: nil,
+                subtitleStreamIndex: nil, // Never burn subtitles on server
                 maxBitrate: effectiveBitrate,
                 allowDirectPlay: preferDirectPlay
             )
@@ -908,9 +1037,13 @@ struct PlayerView: View {
                     return
                 }
                 
-                // Final fallback if we are forcing transcode but no URL was given by server yet
                 if !preferDirectPlay {
-                   let transURL = await session.apiClient.streamURL(itemId: itemId, mediaSourceId: source.id, maxBitrate: effectiveBitrate)
+                   let transURL = await session.apiClient.streamURL(
+                       itemId: itemId, 
+                       mediaSourceId: source.id, 
+                       subtitleStreamIndex: nil, // Never burn subtitles on server
+                       maxBitrate: effectiveBitrate
+                   )
                    LumeInfo("Forcing transcoding HLS fallback: \(transURL?.absoluteString ?? "N/A")")
                    vm.playURL = transURL
                    vm.playSessionId = info.playSessionId
@@ -927,7 +1060,12 @@ struct PlayerView: View {
         vm.mediaSourceId = sourceId
         
         if !preferDirectPlay || item.type == "Channel" || item.type == "TvChannel" {
-            vm.playURL = await session.apiClient.streamURL(itemId: itemId, mediaSourceId: sourceId, maxBitrate: effectiveBitrate)
+            vm.playURL = await session.apiClient.streamURL(
+                itemId: itemId, 
+                mediaSourceId: sourceId, 
+                subtitleStreamIndex: nil, // Never burn subtitles on server
+                maxBitrate: effectiveBitrate
+            )
             LumeInfo("Using HLS fallback: \(vm.playURL?.absoluteString ?? "")")
         } else {
             var fallbackURL = "\(base)/Videos/\(itemId)/stream?static=true&MediaSourceId=\(sourceId)"
@@ -1014,7 +1152,7 @@ struct PlayerView: View {
                 HStack(spacing: 0) {
                     liquidMenuButton(label: "Captions", icon: "captions.bubble") { subtitleMenu }
                     
-                    if vm.selectedSubtitleIndex != -1 {
+                    if vm.userSelectedSubtitleIndex != -1 {
                         Divider().frame(height: 20).background(.white.opacity(0.12)).padding(.horizontal, 4)
                         
                         Menu {
@@ -1161,6 +1299,14 @@ struct PlayerView: View {
                 HStack {
                     Spacer()
                     
+                    if vm.playURL?.isFileURL == false && 
+                       item.type != "Channel" && 
+                       item.type != "TvChannel" && 
+                       !UserDefaults.standard.bool(forKey: "preferDirectPlay") {
+                        qualityMenu
+                            .padding(.trailing, 8)
+                    }
+                    
                     HStack(spacing: 0) {
                         Button {
                             if vm.volume > 0 {
@@ -1225,14 +1371,25 @@ struct PlayerView: View {
 
     @ViewBuilder
     private var subtitleStyleMenu: some View {
-        Section("Subtitle Size") {
-            Button("Tiny") { updateSize(130) }
-            Button("Small") { updateSize(100) }
-            Button("Standard") { updateSize(80) }
-            Button("Large") { updateSize(60) }
-            Button("Extra Large") { updateSize(45) }
-            Button("Huge") { updateSize(30) }
-            Button("Massive") { updateSize(15) }
+        Section("Size") {
+            Button("Tiny") { updateSize(24) }
+            Button("Small") { updateSize(32) }
+            Button("Standard") { updateSize(44) }
+            Button("Large") { updateSize(64) }
+            Button("Extra Large") { updateSize(80) }
+            Button("Massive") { updateSize(120) }
+        }
+        
+        Section("Color") {
+            Button("White") { vm.subtitleColor = "#FFFFFF" }
+            Button("Yellow") { vm.subtitleColor = "#FFFF00" }
+            Button("Cyan") { vm.subtitleColor = "#00FFFF" }
+            Button("Green") { vm.subtitleColor = "#00FF00" }
+        }
+        
+        Section("Background") {
+            Button("None") { vm.subtitleBgOpacity = 0.0 }
+            Button("Black") { vm.subtitleBgOpacity = 0.85 }
         }
     }
 
@@ -1257,12 +1414,12 @@ struct PlayerView: View {
     @ViewBuilder
     private var subtitleMenu: some View {
         Button {
-            vm.selectedSubtitleIndex = -1
-            vm.vlcProxy.setSubtitleTrack(-1)
+            vm.userSelectedSubtitleIndex = -1
+            Task { await vm.loadJellyfinSubtitles(apiClient: session.apiClient, item: resolvedItem, index: -1) }
         } label: {
             HStack {
                 Text("Off")
-                if vm.selectedSubtitleIndex == -1 {
+                if vm.userSelectedSubtitleIndex == -1 {
                     Spacer()
                     Image(systemName: "checkmark")
                 }
@@ -1271,30 +1428,31 @@ struct PlayerView: View {
 
         Divider()
 
-        Button {
-            showSubtitleSearch = true
-        } label: {
-            Label("Download Subtitles...", systemImage: "arrow.down.circle")
-        }
-
-        if vm.vlcSubtitleTracks.isEmpty {
-            Text("No subtitles available")
-                .foregroundStyle(.secondary)
-        } else {
-            ForEach(vm.vlcSubtitleTracks.filter { $0.index != -1 }) { track in
-                Button {
-                    vm.selectedSubtitleIndex = track.index
-                    vm.vlcProxy.setSubtitleTrack(track.index)
-                } label: {
-                    HStack {
-                        Text(track.name)
-                        if track.index == vm.selectedSubtitleIndex {
-                            Spacer()
-                            Image(systemName: "checkmark")
+        if let streams = resolvedItem.mediaSources?.first?.mediaStreams?.filter({ $0.type == "Subtitle" }), !streams.isEmpty {
+            Section("Subtitles") {
+                ForEach(streams, id: \.index) { stream in
+                    let idx = stream.index ?? -1
+                    Button {
+                        vm.userSelectedSubtitleIndex = idx
+                        Task { await vm.loadJellyfinSubtitles(apiClient: session.apiClient, item: resolvedItem, index: idx) }
+                    } label: {
+                        HStack {
+                            Text(stream.displayTitle ?? "Subtitle \(idx)")
+                            if vm.userSelectedSubtitleIndex == idx {
+                                Spacer()
+                                Image(systemName: "checkmark")
+                            }
                         }
                     }
                 }
             }
+            Divider()
+        }
+
+        Button {
+            showSubtitleSearch = true
+        } label: {
+            Label("Download Subtitles...", systemImage: "arrow.down.circle")
         }
     }
 
@@ -1310,6 +1468,63 @@ struct PlayerView: View {
         let s = Int(seconds) % 60
         if h > 0 { return String(format: "%d:%02d:%02d", h, m, s) }
         return String(format: "%d:%02d", m, s)
+    }
+
+    private var qualityLabel: String {
+        let mbps = UserDefaults.standard.integer(forKey: "maxStreamingBitrate")
+        if mbps == 0 || mbps >= 140 { return "Auto" }
+        return "\(mbps) Mbps"
+    }
+    
+    private func formatLiveBitrate(_ bitrate: Float) -> String {
+        guard bitrate > 0 else { return "0.00 Mbps" }
+        
+        // VLC stats usually return bits/s. If it's already Mbps (e.g. < 100), handle that.
+        if bitrate < 100 {
+            return String(format: "%.2f Mbps", bitrate)
+        }
+        
+        // Convert bits/s to Mbps
+        return String(format: "%.2f Mbps", Double(bitrate) / 1_000_000.0)
+    }
+
+    @ViewBuilder
+    private var qualityMenu: some View {
+        Menu {
+            Button("Auto / Max") { setQuality(0) }
+            Divider()
+            Group {
+                Button("1080p 20 Mbps") { setQuality(20) }
+                Button("1080p 15 Mbps") { setQuality(15) }
+                Button("1080p 10 Mbps") { setQuality(10) }
+                Button("720p 6 Mbps") { setQuality(6) }
+                Button("720p 4 Mbps") { setQuality(4) }
+                Button("480p 2 Mbps") { setQuality(2) }
+                Button("360p 1 Mbps") { setQuality(1) }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 14))
+                Text(qualityLabel)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .glassEffect(in: Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func setQuality(_ mbps: Int) {
+        UserDefaults.standard.set(mbps, forKey: "maxStreamingBitrate")
+        let currentPos = vm.currentPlaybackTime
+        vm.vlcProxy.stop()
+        vm.tracksLoaded = false
+        vm.hasResumed = false
+        Task {
+            await prepareAndPlay(resumeAt: currentPos)
+        }
     }
 
     private func stopPlayback() {
@@ -1517,4 +1732,162 @@ struct ModernScrubber: View {
         return String(format: "%d:%02d", m, s)
     }
 }
+
+struct SubtitleOverlay: View {
+    let cues: [SubtitleCue]
+    let vm: PlayerViewModel
+    
+    var body: some View {
+        VStack {
+            Spacer()
+            ForEach(cues) { cue in
+                Text(cue.text)
+                    .font(.system(size: CGFloat(vm.subtitleScale), weight: .bold, design: .rounded))
+                    .foregroundStyle(Color(hex: vm.subtitleColor))
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(
+                        Color.black.opacity(vm.subtitleBgOpacity)
+                    )
+                    .cornerRadius(8)
+                    .shadow(color: .black, radius: 1)
+                    .shadow(color: .black, radius: 1)
+                    .shadow(color: .black, radius: 1)
+                    .shadow(color: .black, radius: 2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.bottom, 20)
+    }
+}
+
+// MARK: - Custom Subtitle Engine
+
+public struct SubtitleCue: Identifiable, Equatable, Sendable {
+    public let id = UUID()
+    public let startTime: Double
+    public let endTime: Double
+    public let text: String
+    
+    public init(startTime: Double, endTime: Double, text: String) {
+        self.startTime = startTime
+        self.endTime = endTime
+        self.text = text
+    }
+}
+
+public enum SubtitleParser {
+    
+    /// Entry point for parsing subtitle files. Infers format from content.
+    public static func parse(_ content: String) -> [SubtitleCue] {
+        if content.contains("WEBVTT") {
+            return parseVTT(content)
+        } else {
+            return parseSRT(content)
+        }
+    }
+    
+    public static func parseSRT(_ srtContent: String) -> [SubtitleCue] {
+        var cues: [SubtitleCue] = []
+        let normalized = srtContent.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let blocks = normalized.components(separatedBy: "\n\n")
+        
+        for block in blocks {
+            let lines = block.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            guard lines.count >= 2 else { continue }
+            
+            // Check if first line is index or timing
+            var timingLine = ""
+            var textStartIndex = 0
+            
+            if lines[0].contains(" --> ") {
+                timingLine = lines[0]
+                textStartIndex = 1
+            } else if lines.count >= 3 && lines[1].contains(" --> ") {
+                timingLine = lines[1]
+                textStartIndex = 2
+            } else {
+                continue
+            }
+            
+            let timings = timingLine.components(separatedBy: " --> ")
+            guard timings.count == 2 else { continue }
+            
+            let start = parseTime(timings[0])
+            let end = parseTime(timings[1])
+            
+            let text = lines[textStartIndex...].joined(separator: "\n")
+                .replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression) // Strip HTML tags like <i>, <b>, etc.
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            
+            if !text.isEmpty {
+                cues.append(SubtitleCue(startTime: start, endTime: end, text: text))
+            }
+        }
+        
+        return cues.sorted { $0.startTime < $1.startTime }
+    }
+    
+    public static func parseVTT(_ vttContent: String) -> [SubtitleCue] {
+        var cues: [SubtitleCue] = []
+        let normalized = vttContent.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n")
+        let lines = normalized.components(separatedBy: .newlines)
+        
+        var currentStart: Double?
+        var currentEnd: Double?
+        var currentText = ""
+        
+        for line in lines {
+            let cleanLine = line.trimmingCharacters(in: .whitespaces)
+            if cleanLine.contains(" --> ") {
+                if let s = currentStart, let e = currentEnd, !currentText.isEmpty {
+                    cues.append(SubtitleCue(startTime: s, endTime: e, text: currentText.trimmingCharacters(in: .whitespacesAndNewlines)))
+                }
+                
+                let timings = cleanLine.components(separatedBy: " --> ")
+                
+                let endPart = timings[1].components(separatedBy: .whitespaces).first ?? timings[1]
+                
+                currentStart = parseTime(timings[0])
+                currentEnd = parseTime(endPart)
+                currentText = ""
+            } else if !cleanLine.isEmpty && 
+                        !cleanLine.hasPrefix("WEBVTT") && 
+                        !cleanLine.hasPrefix("NOTE") && 
+                        !cleanLine.hasPrefix("STYLE") && 
+                        !cleanLine.hasPrefix("REGION") {
+                if currentStart != nil {
+                    currentText += (currentText.isEmpty ? "" : "\n") + cleanLine
+                }
+            }
+        }
+        
+        // Add final cue
+        if let s = currentStart, let e = currentEnd, !currentText.isEmpty {
+            cues.append(SubtitleCue(startTime: s, endTime: e, text: currentText.trimmingCharacters(in: .whitespacesAndNewlines)))
+        }
+        
+        return cues.sorted { $0.startTime < $1.startTime }
+    }
+    
+    private static func parseTime(_ timeString: String) -> Double {
+        let clean = timeString.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespaces)
+        let parts = clean.split(separator: ":")
+        
+        if parts.count == 3 {
+            let h = Double(parts[0]) ?? 0
+            let m = Double(parts[1]) ?? 0
+            let s = Double(parts[2]) ?? 0
+            return (h * 3600) + (m * 60) + s
+        } else if parts.count == 2 {
+            let m = Double(parts[0]) ?? 0
+            let s = Double(parts[1]) ?? 0
+            return (m * 60) + s
+        } else {
+            return Double(clean) ?? 0
+        }
+    }
+}
+
 

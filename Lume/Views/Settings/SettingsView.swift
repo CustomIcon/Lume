@@ -301,19 +301,7 @@ struct PlaybackSettingsView: View {
     @AppStorage("skipIntroEnabled") private var skipIntroEnabled = true
     @AppStorage("defaultSubtitlesOn") private var defaultSubtitlesOn = false
     @AppStorage("resumePlayback") private var resumePlayback = true
-    @AppStorage("maxStreamingBitrate") private var maxStreamingBitrate = 140
     @AppStorage("enableSeekPreviews") private var enableSeekPreviews = true
-
-    private let bitrateOptions = [
-        (label: "Auto (140 Mbps)", value: 140),
-        (label: "100 Mbps", value: 100),
-        (label: "60 Mbps", value: 60),
-        (label: "40 Mbps", value: 40),
-        (label: "20 Mbps", value: 20),
-        (label: "8 Mbps (1080p)", value: 8),
-        (label: "4 Mbps (720p)", value: 4),
-        (label: "2 Mbps", value: 2),
-    ]
 
     var body: some View {
         ScrollView {
@@ -327,12 +315,6 @@ struct PlaybackSettingsView: View {
                         Text("When enabled, Lume requests the raw file from the server.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                        Picker("Max streaming bitrate", selection: $maxStreamingBitrate) {
-                            ForEach(bitrateOptions, id: \.value) { option in
-                                Text(option.label).tag(option.value)
-                            }
-                        }
-                        .pickerStyle(.menu)
                     }
                 }
 

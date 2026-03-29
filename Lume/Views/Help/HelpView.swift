@@ -6,6 +6,7 @@ enum HelpTopic: String, CaseIterable, Identifiable {
     case trickplay = "Seek Previews (Trickplay)"
     case libraries = "Libraries & Discovery"
     case settings = "Settings & Management"
+    case streaming = "Direct Play vs. Direct Stream"
     
     var id: String { self.rawValue }
     
@@ -16,6 +17,7 @@ enum HelpTopic: String, CaseIterable, Identifiable {
         case .trickplay: return "eye"
         case .libraries: return "film"
         case .settings: return "gearshape"
+        case .streaming: return "bolt.horizontal.circle"
         }
     }
 }
@@ -136,6 +138,69 @@ struct HelpView: View {
                     .font(.headline)
                     .padding(.top)
                 Text("Lume automatically syncs your progress with the server. If you leave a movie in the middle, you will see it in 'Continue Watching' and can pick up exactly where you left off.")
+            }
+        case .streaming:
+            VStack(alignment: .leading, spacing: 20) {
+                Text("Streaming Concepts")
+                    .font(.title2)
+                
+                Text("Lume attempts to play your media in the most efficient way possible based on your server settings and your Mac's hardware capabilities. Here is the breakdown of the two primary modes you will encounter:")
+                
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("1. Direct Play (The Gold Standard)")
+                        .font(.headline)
+                        .foregroundStyle(.green)
+                    Text("The file is sent bit-for-bit from the server to your Mac. Lume's engine handles the decoding locally.")
+                    
+                    HStack(alignment: .top, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("ADVANTAGES").font(.caption).bold().foregroundStyle(.secondary)
+                            Text("• Zero server CPU/GPU impact")
+                            Text("• Original source quality")
+                            Text("• Instant seeking")
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("DISADVANTAGES").font(.caption).bold().foregroundStyle(.secondary)
+                            Text("• High bandwidth required")
+                            Text("• Requires hardware codec support")
+                        }
+                    }
+                    .padding()
+                    .background(.green.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("2. Direct Stream (Smart Repacking)")
+                        .font(.headline)
+                        .foregroundStyle(.blue)
+                    Text("The video and audio 'bitstreams' are compatible, but the 'container' (like MKV) is not. The server 're-wraps' them into a compatible format (HLS/MP4) on the fly.")
+                    
+                    HStack(alignment: .top, spacing: 20) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("ADVANTAGES").font(.caption).bold().foregroundStyle(.secondary)
+                            Text("• Very low server CPU impact")
+                            Text("• High compatibility")
+                            Text("• Maintains source quality")
+                        }
+                        
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("DISADVANTAGES").font(.caption).bold().foregroundStyle(.secondary)
+                            Text("• Slight startup delay")
+                            Text("• Occasional seek overhead")
+                        }
+                    }
+                    .padding()
+                    .background(.blue.opacity(0.1))
+                    .cornerRadius(8)
+                }
+                
+                Divider().padding(.vertical)
+                
+                Text("Why does it matter?")
+                    .font(.headline)
+                Text("If your server is struggling during playback, check if you are 'Transcoding'. Transcoding means your server is actively re-encoding the video, which is very intensive. Lume avoids transcoding whenever possible by using its robust native engine.")
             }
         }
     }
