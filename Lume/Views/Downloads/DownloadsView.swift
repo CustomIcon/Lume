@@ -15,37 +15,69 @@ struct DownloadsView: View {
     
     var body: some View {
         Group {
-            if downloads.isEmpty {
-                ContentUnavailableView(
-                    "No Offline Content",
-                    systemImage: "arrow.down.circle",
-                    description: Text("Items you download will appear here for you to enjoy even without an internet connection.")
-                )
+            let activeItems = downloads.filter { $0.status != "completed" }
+            let completedItems = downloads.filter { $0.status == "completed" }
+            
+            if activeItems.isEmpty && completedItems.isEmpty {
+                VStack(spacing: 16) {
+                    Image(systemName: "face.dashed")
+                        .font(.system(size: 64))
+                        .foregroundStyle(.secondary.opacity(0.5))
+                    Text("Nothing to see here")
+                        .font(.title2.bold())
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
-                        // 1. Movies & Books & Music (Normal)
-                        ForEach(libraries, id: \.name) { library in
-                            if library.type == "Series" {
-                                let tvDownloads = downloads.filter { ($0.type == "Episode" || $0.type == "Series") && $0.seriesId != nil }
-                                if !tvDownloads.isEmpty {
-                                    TVSeriesSection(items: tvDownloads)
+                    VStack(alignment: .leading, spacing: 32) {
+                        // 1. Active Downloads (Anything not completed)
+                        if !activeItems.isEmpty {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Downloading")
+                                    .font(.title2.bold())
+                                    .padding(.horizontal)
+                                
+                                LazyVStack(spacing: 12) {
+                                    ForEach(activeItems) { item in
+                                        ActiveDownloadRow(item: item)
+                                    }
                                 }
-                            } else {
-                                let libraryItems = downloads.filter { $0.type == library.type }
-                                if !libraryItems.isEmpty {
-                                    SectionView(title: library.name, items: libraryItems)
-                                }
+                                .padding(.horizontal)
                             }
                         }
                         
-                        let otherItems = downloads.filter { item in
-                            !libraries.map { $0.type }.contains(item.type) && item.type != "Episode"
-                        }
-                        if !otherItems.isEmpty {
-                            SectionView(title: "Other", items: otherItems)
+                        // 2. Completed Downloads
+                        if !completedItems.isEmpty {
+                            VStack(alignment: .leading, spacing: 24) {
+                                Text("Downloaded")
+                                    .font(.title2.bold())
+                                    .padding(.horizontal)
+                                
+                                ForEach(libraries, id: \.name) { library in
+                                    if library.type == "Series" {
+                                        let tvDownloads = completedItems.filter { ($0.type == "Episode" || $0.type == "Series") && $0.seriesId != nil }
+                                        if !tvDownloads.isEmpty {
+                                            TVSeriesSection(items: tvDownloads)
+                                        }
+                                    } else {
+                                        let libraryItems = completedItems.filter { $0.type == library.type }
+                                        if !libraryItems.isEmpty {
+                                            SectionView(title: library.name, items: libraryItems)
+                                        }
+                                    }
+                                }
+                                
+                                let otherItems = completedItems.filter { item in
+                                    !libraries.map { $0.type }.contains(item.type) && item.type != "Episode"
+                                }
+                                if !otherItems.isEmpty {
+                                    SectionView(title: "Other", items: otherItems)
+                                }
+                            }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical)
                 }
             }
@@ -101,10 +133,11 @@ private struct SeriesDownloadCard: View {
                             .aspectRatio(contentMode: .fill)
                     } else {
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.gray.opacity(0.1))
+                            .fill(ThemeManager.shared.currentFlavor.secondaryBackground.opacity(0.4))
                             .overlay {
                                 Image(systemName: "tv")
                                     .font(.largeTitle)
+                                    .foregroundStyle(ThemeManager.shared.currentFlavor.accentColor.opacity(0.5))
                             }
                     }
                 }
@@ -165,50 +198,16 @@ private struct DownloadItemCard: View {
                             .aspectRatio(contentMode: .fill)
                     } else {
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.gray.opacity(0.1))
+                            .fill(ThemeManager.shared.currentFlavor.secondaryBackground.opacity(0.4))
                             .overlay {
                                 Image(systemName: item.type == "Book" ? "book" : (item.type == "Audio" ? "music.note" : "film"))
                                     .font(.largeTitle)
+                                    .foregroundStyle(ThemeManager.shared.currentFlavor.accentColor.opacity(0.5))
                             }
                     }
                 }
                 .aspectRatio(item.type == "Audio" || item.type == "MusicAlbum" ? 1.0 : 0.66, contentMode: .fit)
                 .clipShape(RoundedRectangle(cornerRadius: 12))
-                .overlay {
-                    if let active = session.downloadManager.activeDownloads[item.itemId] {
-                        ZStack {
-                            Color.black.opacity(0.4)
-                            VStack(spacing: 8) {
-                                ProgressView(value: active.progress)
-                                    .progressViewStyle(.linear)
-                                    .padding(.horizontal)
-                                
-                                Button {
-                                    if active.isPaused {
-                                        Task { await session.downloadManager.resumeDownload(itemId: item.itemId, from: session.apiClient) }
-                                    } else {
-                                        session.downloadManager.pauseDownload(itemId: item.itemId)
-                                    }
-                                } label: {
-                                    Image(systemName: active.isPaused ? "play.fill" : "pause.fill")
-                                        .font(.caption)
-                                }
-                                .buttonStyle(.borderedProminent)
-                                .controlSize(.small)
-                            }
-                        }
-                    } else if item.status == "paused" {
-                        ZStack {
-                            Color.black.opacity(0.4)
-                            Button {
-                                Task { await session.downloadManager.resumeDownload(itemId: item.itemId, from: session.apiClient) }
-                            } label: {
-                                Image(systemName: "play.fill")
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
-                    }
-                }
                 
                 if item.status == "completed" {
                     Image(systemName: "checkmark.circle.fill")
@@ -255,6 +254,7 @@ private struct DownloadItemCard: View {
 struct SeriesDownloadsDetailView: View {
     let seriesId: String
     @Environment(SessionManager.self) private var session
+    @State private var theme = ThemeManager.shared
     @Query private var allDownloads: [DownloadedItem]
     
     @State private var seasons: [BaseItemDto] = []
@@ -314,6 +314,8 @@ struct SeriesDownloadsDetailView: View {
             }
         }
         .navigationTitle("Series Downloads")
+        .scrollContentBackground(.hidden)
+        .background(theme.currentFlavor.backgroundColor.ignoresSafeArea())
         .task {
             await loadSeasons()
         }
@@ -343,7 +345,7 @@ struct DownloadEpisodeRow: View {
                         .aspectRatio(contentMode: .fill)
                 } else {
                     Rectangle()
-                        .fill(Color.gray.opacity(0.1))
+                        .fill(ThemeManager.shared.currentFlavor.secondaryBackground.opacity(0.4))
                 }
             }
             .frame(width: 120, height: 68)
@@ -377,5 +379,84 @@ struct DownloadEpisodeRow: View {
                 Label("Delete Download", systemImage: "trash")
             }
         }
+    }
+}
+
+// MARK: - Active Download Row
+
+struct ActiveDownloadRow: View {
+    let item: DownloadedItem
+    @Environment(SessionManager.self) private var session
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            // Smaller Poster
+            ZStack {
+                if let imageURL = session.downloadManager.getLocalImagePath(for: item.itemId),
+                   let data = try? Data(contentsOf: imageURL),
+                   let nsImage = NSImage(data: data) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(ThemeManager.shared.currentFlavor.secondaryBackground.opacity(0.4))
+                }
+            }
+            .frame(width: 44, height: 66)
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            
+            VStack(alignment: .leading, spacing: 6) {
+                Text(item.name)
+                    .font(.headline)
+                    .lineLimit(1)
+                
+                let progress = session.downloadManager.activeDownloads[item.itemId]?.progress ?? (item.status == "paused" ? 0.0 : 0.0)
+                
+                HStack(spacing: 12) {
+                    ProgressView(value: progress)
+                        .progressViewStyle(.linear)
+                    
+                    Text("\(Int(progress * 100))%")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 35)
+                }
+            }
+            
+            HStack(spacing: 12) {
+                // Pause / Resume Button
+                let active = session.downloadManager.activeDownloads[item.itemId]
+                let isPaused = active?.isPaused ?? (item.status == "paused")
+                
+                Button {
+                    if isPaused {
+                        Task { await session.downloadManager.resumeDownload(itemId: item.itemId, from: session.apiClient) }
+                    } else {
+                        session.downloadManager.pauseDownload(itemId: item.itemId)
+                    }
+                } label: {
+                    Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                        .font(.body.bold())
+                        .frame(width: 36, height: 36)
+                        .background(ThemeManager.shared.currentFlavor.secondaryBackground, in: Circle())
+                }
+                .buttonStyle(.plain)
+                
+                // Delete Button
+                Button {
+                    session.downloadManager.deleteDownload(itemId: item.itemId)
+                } label: {
+                    Image(systemName: "trash.fill")
+                        .font(.body.bold())
+                        .frame(width: 36, height: 36)
+                        .background(ThemeManager.shared.currentFlavor.secondaryBackground, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.red)
+            }
+        }
+        .padding(12)
+        .background(ThemeManager.shared.currentFlavor.secondaryBackground.opacity(0.3), in: RoundedRectangle(cornerRadius: 14))
     }
 }

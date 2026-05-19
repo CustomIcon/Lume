@@ -15,8 +15,8 @@ struct HomeView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
                 if isLoading {
-                    ProgressView("Loading...")
-                        .frame(maxWidth: .infinity, minHeight: 200)
+                    HomeSkeletonView()
+                        .padding(.top, 40)
                 } else {
                     // Next Up (Featured Slideshow)
                     if !nextUp.isEmpty {
@@ -343,16 +343,16 @@ private struct FeaturedSlideView: View {
                             Text(epLabel)
                                 .font(.title3)
                                 .fontWeight(.semibold)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.white.opacity(0.8))
                         } else if let label = item.episodeLabel {
                             Text(label)
                                 .font(.headline)
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.white.opacity(0.8))
                         }
 
                         Text(item.overview ?? "")
                             .font(.body)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white.opacity(0.7))
                             .lineLimit(2)
                             .frame(maxWidth: 600, alignment: .leading)
                     }
@@ -372,7 +372,7 @@ private struct FeaturedSlideView: View {
 
                         Label(item.runtimeText ?? "", systemImage: "clock")
                             .font(.subheadline)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white.opacity(0.7))
                     }
                     .padding(.top, 10)
                 }
@@ -414,5 +414,72 @@ private struct FeaturedSlideView: View {
             isPlayingTrailer = false
         }
     }
-    
+}
+
+struct HomeSkeletonView: View {
+    var body: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            // Slideshow Skeleton
+            RoundedRectangle(cornerRadius: 12)
+                .fill(.quaternary)
+                .frame(height: 480)
+                .shimmer()
+                .padding(.horizontal)
+                .padding(.bottom, 24)
+            
+            // Section 1 Skeleton: Continue Watching
+            VStack(alignment: .leading, spacing: 12) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(.quaternary)
+                    .frame(width: 180, height: 24)
+                    .shimmer()
+                    .padding(.horizontal)
+                
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 16) {
+                        ForEach(0..<4, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(.quaternary)
+                                .frame(width: 280, height: 158)
+                                .shimmer()
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+            
+            // Section 2 Skeleton: Latest Items
+            VStack(alignment: .leading, spacing: 12) {
+                RoundedRectangle(cornerRadius: 4)
+                    .fill(.quaternary)
+                    .frame(width: 150, height: 24)
+                    .shimmer()
+                    .padding(.horizontal)
+                
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(0..<6, id: \.self) { _ in
+                            VStack(alignment: .leading, spacing: 8) {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(.quaternary)
+                                    .frame(width: 140, height: 210)
+                                    .shimmer()
+                                
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(.quaternary)
+                                    .frame(width: 100, height: 12)
+                                    .shimmer()
+                                
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(.quaternary)
+                                    .frame(width: 60, height: 10)
+                                    .shimmer()
+                            }
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+            }
+        }
+    }
 }

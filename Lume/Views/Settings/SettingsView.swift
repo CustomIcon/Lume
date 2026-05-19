@@ -528,6 +528,21 @@ struct ServerSettingsView: View {
                         Text(server.serverURL)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                            .padding(.bottom, 2)
+                        
+                        Toggle("Allow Untrusted SSL Certificates", isOn: Binding(
+                            get: { server.ignoreSSLErrors },
+                            set: { newValue in
+                                server.ignoreSSLErrors = newValue
+                                try? modelContext.save()
+                                if isCurrent {
+                                    LumeSessionDelegate.shared.ignoreSSLErrors = newValue
+                                }
+                            }
+                        ))
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
     
                     Spacer()

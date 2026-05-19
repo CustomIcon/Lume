@@ -1,6 +1,7 @@
 import Foundation
 import SwiftData
 import SwiftUI
+import Network
 
 @Observable
 final class SessionManager {
@@ -41,6 +42,9 @@ final class SessionManager {
     private(set) var refreshCounter = 0
     var activeVideoItem: BaseItemDto?
     var activeBookItem: BaseItemDto?
+    
+    private let pathMonitor = NWPathMonitor()
+    private let monitorQueue = DispatchQueue(label: "NetworkMonitor")
     
     private var sidebarSettingsKey: String {
         guard let userId = currentSession?.userID, let serverId = currentServer?.deviceID else { return "sidebar_default" }
@@ -104,6 +108,37 @@ final class SessionManager {
 
     init() {
         self.apiClient = JellyfinAPIClient()
+        startNetworkMonitoring()
+    }
+
+    private func startNetworkMonitoring() {
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            guard let self = self else { return }
+            let isConnected = (path.status == .satisfied)
+            if !isConnected {
+                DispatchQueue.main.async {
+                    if !self.isOffline {
+                        LumeInfo("Network disconnected. Entering offline mode.")
+                        self.isOffline = true
+                        Task { await self.loadLibraries() }
+                    }
+                }
+            } else {
+                // Network restored. Let's try to regain online status
+                DispatchQueue.main.async {
+                    if self.isOffline {
+                        Task {
+                             if await self.apiClient.ping() {
+                                 LumeInfo("Connection to server restored. Going online.")
+                                 self.isOffline = false
+                                 await self.loadLibraries()
+                             }
+                        }
+                    }
+                }
+            }
+        }
+        pathMonitor.start(queue: monitorQueue)
     }
 
     func setup(modelContext: ModelContext) async {
@@ -118,9 +153,19 @@ final class SessionManager {
 
         do {
             let serverDescriptor = FetchDescriptor<ServerConfiguration>(
+                predicate: #Predicate<ServerConfiguration> { $0.isActive },
                 sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
             )
             let servers = try modelContext.fetch(serverDescriptor)
+            
+            // If no active server found, try to get the most recently created one
+            var serverToUse = servers.first
+            if serverToUse == nil {
+                let allServersDescriptor = FetchDescriptor<ServerConfiguration>(
+                    sortBy: [SortDescriptor(\.createdAt, order: .reverse)]
+                )
+                serverToUse = try modelContext.fetch(allServersDescriptor).first
+            }
 
             let sessionDescriptor = FetchDescriptor<UserSession>(
                 predicate: #Predicate<UserSession> { $0.isActive },
@@ -128,56 +173,42 @@ final class SessionManager {
             )
             let sessions = try modelContext.fetch(sessionDescriptor)
 
-            if let server = servers.first, let session = sessions.first {
+            if let server = serverToUse, let session = sessions.first {
                 self.currentServer = server
                 self.currentSession = session
                 loadSidebarSettings()
+                LumeSessionDelegate.shared.ignoreSSLErrors = server.ignoreSSLErrors
                 await apiClient.configure(
                     baseURL: server.serverURL,
                     accessToken: session.accessToken,
                     userId: session.userID,
-                    deviceId: server.deviceID
+                    deviceId: server.deviceID,
+                    ignoreSSLErrors: server.ignoreSSLErrors
                 )
                 LumeInfo("Found saved session for \(session.username) on \(server.serverURL)")
-                // Validate the session is still active
+                // Validate the session is still active with a short ping first
+                if await !apiClient.ping() {
+                    LumeInfo("Server ping failed on startup, entering offline mode.")
+                    isOffline = true
+                    authState = .authenticated
+                    await loadLibraries()
+                    return
+                }
+                
                 do {
-                    _ = try await apiClient.getUserViews()
+                    _ = try await apiClient.getUserViews(timeout: 5.0)
                     isOffline = false
                     authState = .authenticated
                     await loadLibraries()
-                } catch let error {
-                    if let apiError = error as? APIError {
-                        if case .serverUnreachable = apiError {
-                            LumeInfo("Server unreachable (APIError), entering offline mode.")
-                            isOffline = true
-                            authState = .authenticated
-                            await loadLibraries()
-                            return
-                        }
-                    }
-                    
-                    if let nsError = error as NSError?, nsError.domain == NSURLErrorDomain {
-                        let connectivityCodes = [
-                             NSURLErrorTimedOut, NSURLErrorCannotFindHost, 
-                             NSURLErrorCannotConnectToHost, NSURLErrorNetworkConnectionLost, 
-                             NSURLErrorNotConnectedToInternet, NSURLErrorDNSLookupFailed
-                        ]
-                        if connectivityCodes.contains(nsError.code) {
-                            LumeInfo("Server unreachable (NSURLError), entering offline mode.")
-                            isOffline = true
-                            authState = .authenticated
-                            await loadLibraries()
-                            return
-                        }
-                    }
-                    
+                } catch {
                     // Token might be expired or other actual API error
                     LumeError("Session validation failed: \(error.localizedDescription)")
                     authState = .needsAuthentication
                 }
             } else if let server = servers.first {
                 self.currentServer = server
-                await apiClient.configure(baseURL: server.serverURL, deviceId: server.deviceID)
+                LumeSessionDelegate.shared.ignoreSSLErrors = server.ignoreSSLErrors
+                await apiClient.configure(baseURL: server.serverURL, deviceId: server.deviceID, ignoreSSLErrors: server.ignoreSSLErrors)
                 authState = .needsAuthentication
             } else {
                 authState = .needsServer
@@ -187,7 +218,7 @@ final class SessionManager {
         }
     }
 
-    func validateAndSaveServer(url: String) async throws -> PublicServerInfo {
+    func validateAndSaveServer(url: String, ignoreSSLErrors: Bool = false) async throws -> PublicServerInfo {
         isLoading = true
         error = nil
         defer { isLoading = false }
@@ -195,25 +226,30 @@ final class SessionManager {
         let cleanURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
 
-        await apiClient.configure(baseURL: cleanURL)
+        LumeSessionDelegate.shared.ignoreSSLErrors = ignoreSSLErrors
+        await apiClient.configure(baseURL: cleanURL, ignoreSSLErrors: ignoreSSLErrors)
 
         let info = try await apiClient.getPublicServerInfo()
 
         guard let modelContext else { throw APIError.invalidResponse }
 
-        // No longer deleting existing servers for multi-server support
-
+        // Ensure only this server is active
+        let allServers = try modelContext.fetch(FetchDescriptor<ServerConfiguration>())
+        for s in allServers { s.isActive = false }
+        
         let server = ServerConfiguration(
             serverURL: cleanURL,
             serverName: info.serverName ?? "",
-            serverVersion: info.version ?? ""
+            serverVersion: info.version ?? "",
+            ignoreSSLErrors: ignoreSSLErrors
         )
+        server.isActive = true
 
         modelContext.insert(server)
         try modelContext.save()
 
         self.currentServer = server
-        await apiClient.configure(baseURL: cleanURL, deviceId: server.deviceID)
+        await apiClient.configure(baseURL: cleanURL, deviceId: server.deviceID, ignoreSSLErrors: ignoreSSLErrors)
         authState = .needsAuthentication
 
         return info
@@ -236,7 +272,9 @@ final class SessionManager {
             throw APIError.invalidResponse
         }
 
-        // Marking the specific session as active instead of clearing others
+        // Deactivate other sessions
+        let allSessions = try? modelContext.fetch(FetchDescriptor<UserSession>())
+        for s in allSessions ?? [] { s.isActive = false }
 
         let session = UserSession(
             userID: userId,
@@ -244,11 +282,12 @@ final class SessionManager {
             accessToken: token,
             serverID: server.deviceID
         )
+        session.isActive = true
+        session.lastLoginDate = Date()
 
         modelContext.insert(session)
         try modelContext.save()
 
-        session.isActive = true 
         self.currentSession = session
         authState = .authenticated
         LumeInfo("Authenticated successfully as \(userName)")
@@ -257,11 +296,20 @@ final class SessionManager {
 
     func switchServer(to server: ServerConfiguration) async {
         triggerFullRefresh()
-        LumeInfo("Switching to server: \(server.serverName) (\(server.serverURL))")
+        // Mark this server as active and others as inactive
         self.currentServer = server
+        server.isActive = true
         
         // Find stored session for this server
         guard let modelContext else { return }
+        
+        // Update other servers to be inactive
+        if let allServers = try? modelContext.fetch(FetchDescriptor<ServerConfiguration>()) {
+            for s in allServers {
+                if s.deviceID != server.deviceID { s.isActive = false }
+            }
+        }
+        
         let deviceID = server.deviceID
         let descriptor = FetchDescriptor<UserSession>(
             predicate: #Predicate<UserSession> { $0.isActive && $0.serverID == deviceID },
@@ -273,20 +321,30 @@ final class SessionManager {
             if let session = sessions.first {
                 LumeInfo("Found active session for user \(session.username)")
                 self.currentSession = session
+                session.lastLoginDate = Date() // Renew activity
+                LumeSessionDelegate.shared.ignoreSSLErrors = server.ignoreSSLErrors
                 await apiClient.configure(
                     baseURL: server.serverURL,
                     accessToken: session.accessToken,
                     userId: session.userID,
-                    deviceId: server.deviceID
+                    deviceId: server.deviceID,
+                    ignoreSSLErrors: server.ignoreSSLErrors
                 )
+                
+                // Re-verify connectivity for the new server
+                isOffline = await !apiClient.ping()
+                LumeInfo("Connectivity for new server: \(isOffline ? "OFFLINE" : "ONLINE")")
+                
                 authState = .authenticated
                 await loadLibraries()
             } else {
                 LumeInfo("No active session for this server. Redirecting to login.")
                 self.currentSession = nil
-                await apiClient.configure(baseURL: server.serverURL, deviceId: server.deviceID)
+                LumeSessionDelegate.shared.ignoreSSLErrors = server.ignoreSSLErrors
+                await apiClient.configure(baseURL: server.serverURL, deviceId: server.deviceID, ignoreSSLErrors: server.ignoreSSLErrors)
                 authState = .needsAuthentication
             }
+            try? modelContext.save()
         } catch {
             LumeError("Failed to fetch session for server switch: \(error.localizedDescription)")
             authState = .needsAuthentication
@@ -309,20 +367,39 @@ final class SessionManager {
         }
         
         self.currentSession = session
-        // Find server configuration
+        session.isActive = true
+        session.lastLoginDate = Date() // Renew activity
+        
+        // Find server configuration and mark as active
         let serverDescriptor = FetchDescriptor<ServerConfiguration>(
             predicate: #Predicate<ServerConfiguration> { $0.deviceID == deviceID }
         )
         if let servers = try? modelContext.fetch(serverDescriptor), let server = servers.first {
             self.currentServer = server
+            server.isActive = true
+            
+            // Mark other servers as inactive
+            if let allServers = try? modelContext.fetch(FetchDescriptor<ServerConfiguration>()) {
+                for s in allServers {
+                    if s.deviceID != server.deviceID { s.isActive = false }
+                }
+            }
+            
+            LumeSessionDelegate.shared.ignoreSSLErrors = server.ignoreSSLErrors
             await apiClient.configure(
                 baseURL: server.serverURL,
                 accessToken: session.accessToken,
                 userId: session.userID,
-                deviceId: server.deviceID
+                deviceId: server.deviceID,
+                ignoreSSLErrors: server.ignoreSSLErrors
             )
+            
+            // Re-verify connectivity for the switched user/server
+            isOffline = await !apiClient.ping()
+            LumeInfo("Connectivity for new selection: \(isOffline ? "OFFLINE" : "ONLINE")")
         }
         
+        try? modelContext.save()
         authState = .authenticated
         await loadLibraries()
     }
@@ -435,10 +512,9 @@ final class SessionManager {
 
     func refreshLibraries() async {
         // Recheck connectivity when refreshing
-        do {
-            _ = try await apiClient.getUserViews()
+        if await apiClient.ping() {
             isOffline = false
-        } catch {
+        } else {
             isOffline = true
         }
         await loadLibraries()

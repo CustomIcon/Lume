@@ -11,6 +11,7 @@ import SwiftData
 @main
 struct LumeApp: App {
     @State private var sessionManager = SessionManager()
+    @State private var themeManager = ThemeManager.shared
     @Environment(\.openWindow) private var openWindow
 
     var sharedModelContainer: ModelContainer = {
@@ -36,6 +37,8 @@ struct LumeApp: App {
             RootView()
                 .frame(minWidth: 1100, minHeight: 700)
                 .environment(sessionManager)
+                .environment(themeManager)
+                .themeContainer()
                 .task {
                     await sessionManager.setup(modelContext: sharedModelContainer.mainContext)
                 }
@@ -48,6 +51,7 @@ struct LumeApp: App {
                 PlayerView(item: activeVideo)
                     .id(activeVideo.id)
                     .environment(sessionManager)
+                    .environment(themeManager)
                     .themeContainer()
                     .frame(minWidth: 800, minHeight: 450)
             } else {
@@ -62,6 +66,7 @@ struct LumeApp: App {
                 BookReaderView(item: activeBook)
                     .id(activeBook.id)
                     .environment(sessionManager)
+                    .environment(themeManager)
                     .themeContainer()
                     .frame(minWidth: 400, minHeight: 600)
             } else {
@@ -74,6 +79,7 @@ struct LumeApp: App {
         Window("Help Center", id: "lume-help") {
             HelpView()
                 .environment(sessionManager)
+                .environment(themeManager)
                 .themeContainer()
                 .frame(minWidth: 850, minHeight: 600)
         }
@@ -124,10 +130,9 @@ struct LumeApp: App {
         Settings {
             SettingsView()
                 .environment(sessionManager)
+                .environment(themeManager)
+                .themeContainer()
                 .modelContainer(sharedModelContainer)
-                .task {
-                    await sessionManager.setup(modelContext: sharedModelContainer.mainContext)
-                }
         }
     }
 }

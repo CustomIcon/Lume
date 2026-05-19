@@ -6,6 +6,7 @@ struct ServerSetupView: View {
     @State private var isValidating = false
     @State private var errorMessage: String?
     @State private var serverInfo: PublicServerInfo?
+    @State private var ignoreSSLErrors = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -40,15 +41,31 @@ struct ServerSetupView: View {
                         .textFieldStyle(.roundedBorder)
                         .onSubmit { validateServer() }
                         .disabled(isValidating)
+
+                    Toggle("Allow Untrusted SSL Certificates", isOn: $ignoreSSLErrors)
+                        .toggleStyle(.checkbox)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .disabled(isValidating)
+                        .padding(.top, 4)
                 }
 
                 if let errorMessage {
-                    HStack {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundStyle(.yellow)
-                        Text(errorMessage)
-                            .foregroundStyle(.red)
-                            .font(.callout)
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.yellow)
+                            Text(errorMessage)
+                                .foregroundStyle(.red)
+                                .font(.callout)
+                        }
+                        
+                        if errorMessage.contains("SSL") || errorMessage.contains("certificate") || errorMessage.contains("trust") || errorMessage.contains("secure") {
+                            Text("If your server uses a self-signed certificate, check \"Allow Untrusted SSL Certificates\" above.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.leading, 24)
+                        }
                     }
                 }
 
@@ -115,7 +132,7 @@ struct ServerSetupView: View {
                     serverURL = url
                 }
 
-                let info = try await session.validateAndSaveServer(url: url)
+                let info = try await session.validateAndSaveServer(url: url, ignoreSSLErrors: ignoreSSLErrors)
                 serverInfo = info
             } catch {
                 errorMessage = error.localizedDescription

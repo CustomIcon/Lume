@@ -146,30 +146,7 @@ enum ThemeFlavor: String, CaseIterable, Identifiable, Codable {
     }
 
     var textColor: Color {
-        switch self {
-        case .mocha:            return Color(hex: "cdd6f4")
-        case .macchiato:        return Color(hex: "cad3f5")
-        case .frappe:           return Color(hex: "c6d0f5")
-        case .latte:            return Color(hex: "4c4f69")
-        case .nordDark:         return Color(hex: "eceff4")
-        case .nordLight:        return Color(hex: "2e3440")
-        case .dracula:          return Color(hex: "f8f8f2")
-        case .gruvboxDark:      return Color(hex: "ebdbb2")
-        case .gruvboxLight:     return Color(hex: "3c3836")
-        case .tokyoNight:       return Color(hex: "c0caf5")
-        case .tokyoNightStorm:  return Color(hex: "c0caf5")
-        case .tokyoNightDay:    return Color(hex: "3760bf")
-        case .rosePine:         return Color(hex: "e0def4")
-        case .rosePineMoon:     return Color(hex: "e0def4")
-        case .rosePineDawn:     return Color(hex: "575279")
-        case .solarizedDark:    return Color(hex: "839496")
-        case .solarizedLight:   return Color(hex: "657b83")
-        case .oneDark:          return Color(hex: "abb2bf")
-        case .kanagawa:         return Color(hex: "dcd7ba")
-        case .midnight:         return Color(hex: "b2ccd6")
-        case .sunset:           return Color(hex: "cdd6f4")
-        case .oled:             return Color(hex: "ffffff")
-        }
+        isDark ? .white : .black
     }
 
     var subtleText: Color {

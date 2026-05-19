@@ -21,15 +21,10 @@ struct RemoteImageView: View {
                     .resizable()
                     .aspectRatio(contentMode: contentMode)
             } else if isLoading {
-                placeholderView
-                    .overlay {
-                        ProgressView()
-                            .controlSize(.small)
-                            .tint(.secondary)
-                            .fixedSize()
-                    }
+                placeholderView(isSkeleton: true)
+                    .shimmer()
             } else {
-                placeholderView
+                placeholderView(isSkeleton: false)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
@@ -61,7 +56,7 @@ struct RemoteImageView: View {
         loadTask = Task {
             do {
                 // Check disk again in background to be sure
-                let (data, _) = try await URLSession.shared.data(from: url)
+                let (data, _) = try await URLSession.lume.data(from: url)
                 
                 // IMPORTANT: Check for cancellation before processing heavy data
                 if Task.isCancelled { return }
@@ -91,21 +86,39 @@ struct RemoteImageView: View {
         }
     }
 
-    private var placeholderView: some View {
+    @ViewBuilder
+    private func placeholderView(isSkeleton: Bool) -> some View {
         Group {
             if section == .books, let title = title {
-                DynamicPlaceholderView(title: title, icon: "book.pages", cornerRadius: cornerRadius, useSerif: true, hideTitle: hideTitle)
+                if isSkeleton {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(.quaternary)
+                } else {
+                    DynamicPlaceholderView(title: title, icon: "book.pages", cornerRadius: cornerRadius, useSerif: true, hideTitle: hideTitle)
+                }
             } else if (itemType == "MusicArtist" || itemType == "Artist" || itemType == "AlbumArtist" || itemType == "Person" || itemType == "Actor" || itemType == "Director" || itemType == "Producer" || itemType == "Writer"), let title = title {
-                DynamicPlaceholderView(title: title, icon: (itemType?.contains("Artist") == true || itemType?.contains("Music") == true) ? "music.mic" : "person.fill", cornerRadius: cornerRadius, hideTitle: hideTitle)
+                if isSkeleton {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(.quaternary)
+                } else {
+                    DynamicPlaceholderView(title: title, icon: (itemType?.contains("Artist") == true || itemType?.contains("Music") == true) ? "music.mic" : "person.fill", cornerRadius: cornerRadius, hideTitle: hideTitle)
+                }
             } else if (section == .music || itemType == "MusicGenre" || itemType == "Playlist" || itemType == "MusicAlbum" || itemType == "Audio"), let title = title {
-                DynamicPlaceholderView(title: title, icon: "music.quarternote.3", cornerRadius: cornerRadius, hideTitle: hideTitle)
+                if isSkeleton {
+                    RoundedRectangle(cornerRadius: cornerRadius)
+                        .fill(.quaternary)
+                } else {
+                    DynamicPlaceholderView(title: title, icon: "music.quarternote.3", cornerRadius: cornerRadius, hideTitle: hideTitle)
+                }
             } else {
                 RoundedRectangle(cornerRadius: cornerRadius)
                     .fill(.quaternary)
                     .overlay {
-                        Image(systemName: "photo")
-                            .font(.title2)
-                            .foregroundStyle(.tertiary)
+                        if !isSkeleton {
+                            Image(systemName: "photo")
+                                .font(.title2)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
             }
         }
@@ -226,11 +239,8 @@ struct ItemPosterCard: View {
             .frame(width: width, height: width * imageRatio)
             .clipped()
 
-            Text(item.displayName)
-                .font(.caption)
-                .fontWeight(.medium)
-                .lineLimit(2)
-                .frame(width: width, alignment: .leading)
+            MarqueeText(text: item.displayName, font: .caption, fontWeight: .medium)
+                .frame(width: width, height: 16, alignment: .leading)
 
             if let year = item.yearText {
                 Text(year)
@@ -293,10 +303,8 @@ struct ItemBackdropCard: View {
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 } else {
-                    Text(item.displayName)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
+                    MarqueeText(text: item.displayName, font: .caption, fontWeight: .medium)
+                        .frame(width: width, height: 16, alignment: .leading)
                     if let year = item.yearText {
                         Text(year)
                             .font(.caption2)

@@ -17,8 +17,27 @@ struct TVShowsLibraryView: View {
     var body: some View {
         Group {
             if isLoading && shows.isEmpty {
-                ProgressView("Loading shows...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 20) {
+                        ForEach(0..<12, id: \.self) { _ in
+                            VStack(alignment: .leading, spacing: 6) {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(.quaternary)
+                                    .frame(height: 225)
+                                    .shimmer()
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(.quaternary)
+                                    .frame(width: 100, height: 12)
+                                    .shimmer()
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(.quaternary)
+                                    .frame(width: 60, height: 10)
+                                    .shimmer()
+                            }
+                        }
+                    }
+                    .padding()
+                }
             } else if shows.isEmpty {
                 ContentUnavailableView(
                     "No TV Shows",
@@ -121,6 +140,7 @@ struct TVShowsLibraryView: View {
 
 struct SeriesDetailView: View {
     @Environment(SessionManager.self) private var session
+    @State private var theme = ThemeManager.shared
     let series: BaseItemDto
 
     @State private var fullSeries: BaseItemDto?
@@ -146,19 +166,18 @@ struct SeriesDetailView: View {
                             LinearGradient(
                                 stops: [
                                     .init(color: .black.opacity(0.8), location: 0.0),
-                                    .init(color: .black.opacity(0.4), location: 0.2),
-                                    .init(color: .clear, location: 0.5)
+                                    .init(color: .black.opacity(0.4), location: 0.3),
+                                    .init(color: .clear, location: 0.6)
                                 ],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
                             
-                            // Bottom Dark Fade for Atmosphere
+                            // Bottom Fade to transition to content
                             LinearGradient(
                                 stops: [
                                     .init(color: .clear, location: 0.5),
-                                    .init(color: .black.opacity(0.5), location: 0.85),
-                                    .init(color: .black.opacity(0.9), location: 1.0)
+                                    .init(color: theme.currentFlavor.backgroundColor.opacity(0.8), location: 1.0)
                                 ],
                                 startPoint: .top,
                                 endPoint: .bottom
@@ -184,6 +203,7 @@ struct SeriesDetailView: View {
                             Text(series.displayName)
                                 .font(.largeTitle)
                                 .fontWeight(.bold)
+                                .foregroundStyle(.white)
                         }
 
                         HStack(spacing: 12) {
@@ -196,7 +216,7 @@ struct SeriesDetailView: View {
                             }
                         }
                         .font(.callout)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white.opacity(0.8))
                     }
                     .padding()
                 }
@@ -228,7 +248,15 @@ struct SeriesDetailView: View {
                 }
 
                 if isLoadingEpisodes {
-                    ProgressView().padding()
+                    VStack(spacing: 8) {
+                        ForEach(0..<4, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(.quaternary)
+                                .frame(height: 116)
+                                .shimmer()
+                        }
+                    }
+                    .padding(.horizontal)
                 } else {
                     LazyVStack(spacing: 8) {
                         ForEach(episodes, id: \.id) { episode in
@@ -249,6 +277,8 @@ struct SeriesDetailView: View {
         .navigationTitle(series.displayName)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbarBackground(.hidden, for: .automatic)
+        .scrollContentBackground(.hidden)
+        .background(theme.currentFlavor.backgroundColor.ignoresSafeArea())
         .task { await loadSeriesData() }
     }
 
@@ -350,7 +380,7 @@ struct EpisodeRow: View {
 
             if episode.userData?.played == true { Image(systemName: "eye.fill").foregroundStyle(.secondary).font(.caption) }
         }
-        .padding(8).background(RoundedRectangle(cornerRadius: 8).fill(Color.gray.opacity(0.1))).contentShape(Rectangle())
+        .padding(8).background(RoundedRectangle(cornerRadius: 8).fill(ThemeManager.shared.currentFlavor.secondaryBackground.opacity(0.5))).contentShape(Rectangle())
         .task {
             if let id = episode.id {
                 let tag = episode.imageTags?["Primary"]

@@ -42,8 +42,29 @@ struct LiveTVLibraryView: View {
                         .buttonStyle(.borderedProminent)
                     }
                 } else if isLoading && (selectedTab == 0 ? channels.isEmpty : recordings.isEmpty) {
-                    ProgressView("Loading Live TV...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 24) {
+                            ForEach(0..<12, id: \.self) { _ in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    RoundedRectangle(cornerRadius: 12)
+                                        .fill(.quaternary)
+                                        .aspectRatio(16/9, contentMode: .fit)
+                                        .shimmer()
+                                    
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.quaternary)
+                                        .frame(width: 100, height: 14)
+                                        .shimmer()
+                                    
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.quaternary)
+                                        .frame(width: 60, height: 10)
+                                        .shimmer()
+                                }
+                            }
+                        }
+                        .padding()
+                    }
                 } else if selectedTab == 0 && channels.isEmpty {
                     ContentUnavailableView(
                         "No Channels",

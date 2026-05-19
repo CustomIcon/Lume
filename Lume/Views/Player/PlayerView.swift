@@ -484,7 +484,7 @@ final class PlayerViewModel {
             LumeDebug("Trying custom subtitle fetch: \(urlString)")
             
             do {
-                let (data, response) = try await URLSession.shared.data(from: url)
+                let (data, response) = try await URLSession.lume.data(from: url)
                 guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
                     continue
                 }

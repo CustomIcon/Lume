@@ -131,21 +131,31 @@ struct MainAppView: View {
                 selectedSidebarItem = session.isOffline ? .downloads : .home
             }
         }
+        .onChange(of: session.isOffline) { _, isNowOffline in
+            if isNowOffline {
+                // Force switch away from online-only views
+                if selectedSidebarItem == .home || selectedSidebarItem == .search {
+                    selectedSidebarItem = .downloads
+                } else if case .library = selectedSidebarItem {
+                    selectedSidebarItem = .downloads
+                }
+            }
+        }
     }
 
     private var sidebar: some View {
         VStack(spacing: 0) {
             List(selection: $selectedSidebarItem) {
                 Section {
-                    NavigationLink(value: SidebarItem.home) {
-                        Label("Home", systemImage: "house")
+                    if !session.isOffline {
+                        NavigationLink(value: SidebarItem.home) {
+                            Label("Home", systemImage: "house")
+                        }
+                        
+                        NavigationLink(value: SidebarItem.search) {
+                            Label("Search", systemImage: "magnifyingglass")
+                        }
                     }
-                    .disabled(session.isOffline)
-                    
-                    NavigationLink(value: SidebarItem.search) {
-                        Label("Search", systemImage: "magnifyingglass")
-                    }
-                    .disabled(session.isOffline)
                     
                     NavigationLink(value: SidebarItem.downloads) {
                         Label("Downloads", systemImage: "arrow.down.circle")
@@ -290,6 +300,7 @@ struct MainAppView: View {
                 libraryView(for: library)
             }
         }
+        .foregroundStyle(ThemeManager.shared.currentFlavor.textColor)
         .id("\(selectedSidebarItem?.hashValue ?? 0)-\(session.refreshCounter)")
         .transition(enableAnimations ? .asymmetric(insertion: .opacity.combined(with: .scale(scale: 0.98)), removal: .opacity) : .identity)
     }
@@ -326,12 +337,12 @@ struct MainAppView: View {
 }
 
 struct ThemeContainerModifier: ViewModifier {
-    @State private var theme = ThemeManager.shared
+    var theme = ThemeManager.shared
     
     func body(content: Content) -> some View {
         content
             .tint(theme.currentFlavor.accentColor)
-            .foregroundStyle(theme.currentFlavor.textColor)
+            .accentColor(theme.currentFlavor.accentColor)
             .preferredColorScheme(theme.currentFlavor.isDark ? .dark : .light)
     }
 }

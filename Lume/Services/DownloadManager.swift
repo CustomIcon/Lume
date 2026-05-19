@@ -100,7 +100,7 @@ final class DownloadManager: NSObject {
         guard let imageURL = await apiClient.imageURL(itemId: itemId, imageType: "Primary", maxWidth: 400, tag: item.imageTags?["Primary"]) else { return }
         
         do {
-            let (data, _) = try await URLSession.shared.data(from: imageURL)
+            let (data, _) = try await URLSession.lume.data(from: imageURL)
             let fileName = "poster_\(itemId).jpg"
             let destination = downloadsFolder.appendingPathComponent(fileName)
             try data.write(to: destination)
@@ -121,7 +121,7 @@ final class DownloadManager: NSObject {
         guard let imageURL = await apiClient.imageURL(itemId: seriesId, imageType: "Primary", maxWidth: 400) else { return }
         
         do {
-            let (data, _) = try await URLSession.shared.data(from: imageURL)
+            let (data, _) = try await URLSession.lume.data(from: imageURL)
             let fileName = "series_poster_\(seriesId).jpg"
             let destination = downloadsFolder.appendingPathComponent(fileName)
             try data.write(to: destination)
@@ -275,6 +275,19 @@ private class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
                 return
             }
             manager.updateStatus(itemId: itemId, status: "failed")
+        }
+    }
+    func urlSession(
+        _ session: URLSession,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        if LumeSessionDelegate.shared.ignoreSSLErrors,
+           challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+           let serverTrust = challenge.protectionSpace.serverTrust {
+            completionHandler(.useCredential, URLCredential(trust: serverTrust))
+        } else {
+            completionHandler(.performDefaultHandling, nil)
         }
     }
 }

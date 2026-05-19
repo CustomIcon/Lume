@@ -18,8 +18,18 @@ struct SearchView: View {
         VStack(spacing: 0) {
             if searchText.isEmpty {
                 if isLoadingSuggestions {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ScrollView {
+                        LazyVGrid(columns: columns, spacing: 16) {
+                            ForEach(0..<12, id: \.self) { _ in
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(.quaternary)
+                                    .frame(height: 225)
+                                    .shimmer()
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical)
+                    }
                 } else if suggestions.isEmpty {
                     ContentUnavailableView(
                         "Search Your Library",
@@ -49,8 +59,18 @@ struct SearchView: View {
                     }
                 }
             } else if isSearching {
-                ProgressView("Searching...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 16) {
+                        ForEach(0..<12, id: \.self) { _ in
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(.quaternary)
+                                .frame(height: 225)
+                                .shimmer()
+                        }
+                    }
+                    .padding(.horizontal)
+                    .padding(.top)
+                }
             } else if results.isEmpty {
                 ContentUnavailableView.search(text: searchText)
             } else {

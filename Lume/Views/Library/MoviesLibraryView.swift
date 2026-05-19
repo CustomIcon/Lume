@@ -18,8 +18,27 @@ struct MoviesLibraryView: View {
     var body: some View {
         Group {
             if isLoading && movies.isEmpty {
-                ProgressView("Loading movies...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                ScrollView {
+                    LazyVGrid(columns: columns, spacing: 20) {
+                        ForEach(0..<12, id: \.self) { _ in
+                            VStack(alignment: .leading, spacing: 6) {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(.quaternary)
+                                    .frame(height: 225)
+                                    .shimmer()
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(.quaternary)
+                                    .frame(width: 100, height: 12)
+                                    .shimmer()
+                                RoundedRectangle(cornerRadius: 3)
+                                    .fill(.quaternary)
+                                    .frame(width: 60, height: 10)
+                                    .shimmer()
+                            }
+                        }
+                    }
+                    .padding()
+                }
             } else if movies.isEmpty {
                 ContentUnavailableView(
                     "No Movies",

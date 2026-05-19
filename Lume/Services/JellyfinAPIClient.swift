@@ -39,23 +39,22 @@ actor JellyfinAPIClient {
     private let appName = "Lume"
     private let appVersion = "1.0"
 
-    init(baseURL: String = "", accessToken: String? = nil, userId: String? = nil, deviceId: String = UUID().uuidString) {
-        let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 30
-        config.timeoutIntervalForResource = 300
-        self.session = URLSession(configuration: config)
+    init(baseURL: String = "", accessToken: String? = nil, userId: String? = nil, deviceId: String = UUID().uuidString, ignoreSSLErrors: Bool = false) {
+        self.session = URLSession.lume
         self.baseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.accessToken = accessToken
         self.userId = userId
         self.deviceId = deviceId
         self.deviceName = Host.current().localizedName ?? "Mac"
+        LumeSessionDelegate.shared.ignoreSSLErrors = ignoreSSLErrors
     }
 
-    func configure(baseURL: String, accessToken: String? = nil, userId: String? = nil, deviceId: String? = nil) {
+    func configure(baseURL: String, accessToken: String? = nil, userId: String? = nil, deviceId: String? = nil, ignoreSSLErrors: Bool = false) {
         self.baseURL = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         self.accessToken = accessToken
         self.userId = userId
         if let deviceId { self.deviceId = deviceId }
+        LumeSessionDelegate.shared.ignoreSSLErrors = ignoreSSLErrors
     }
 
     func setAuth(accessToken: String, userId: String) {
@@ -145,11 +144,19 @@ actor JellyfinAPIClient {
         return request
     }
 
-    private func executeData(_ request: URLRequest) async throws -> Data {
+    private func executeData(_ request: URLRequest, timeout: TimeInterval? = nil) async throws -> Data {
+        var finalRequest = request
+        if let timeout {
+            finalRequest.timeoutInterval = timeout
+        } else {
+            // Default timeout for all API requests to 15s instead of standard 60s
+            finalRequest.timeoutInterval = 15.0
+        }
+        
         let data: Data
         let response: URLResponse
         do {
-            (data, response) = try await session.data(for: request)
+            (data, response) = try await session.data(for: finalRequest)
         } catch let error as URLError {
             if error.code == .notConnectedToInternet || error.code == .timedOut || error.code == .cannotConnectToHost || error.code == .cannotFindHost {
                 throw APIError.serverUnreachable
@@ -174,7 +181,11 @@ actor JellyfinAPIClient {
         return data
     }
 
-    private func executeVoid(_ request: URLRequest) async throws {
+    private func executeVoid(_ request: URLRequest, timeout: TimeInterval? = nil) async throws {
+        var finalRequest = request
+        if let timeout {
+            finalRequest.timeoutInterval = timeout
+        }
         let data: Data
         let response: URLResponse
         do {
@@ -249,10 +260,22 @@ actor JellyfinAPIClient {
         return result
     }
 
-    func getUserViews() async throws -> BaseItemDtoQueryResult {
+    func ping() async -> Bool {
+        guard !baseURL.isEmpty else { return false }
+        do {
+            // Faster 2.5s timeout for ping
+            let request = try buildRequest(path: "/System/Info/Public")
+            _ = try await executeData(request, timeout: 2.5)
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    func getUserViews(timeout: TimeInterval? = nil) async throws -> BaseItemDtoQueryResult {
         guard let userId else { throw APIError.unauthorized }
         let request = try buildRequest(path: "/Users/\(userId)/Views")
-        let data = try await executeData(request)
+        let data = try await executeData(request, timeout: timeout)
         return try await MainActor.run { try JSONDecoder().decode(BaseItemDtoQueryResult.self, from: data) }
     }
 

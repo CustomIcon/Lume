@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ItemDetailView: View {
     @Environment(SessionManager.self) private var session
+    @State private var theme = ThemeManager.shared
     let item: BaseItemDto
 
     @State private var fullItem: BaseItemDto?
@@ -31,20 +32,19 @@ struct ItemDetailView: View {
                                 // Top Dark Fade for Readability
                                 LinearGradient(
                                     stops: [
-                                        .init(color: .black, location: 0.0),
-                                        .init(color: .black.opacity(0.4), location: 0.2),
-                                        .init(color: .clear, location: 0.5)
+                                        .init(color: .black.opacity(0.8), location: 0.0),
+                                        .init(color: .black.opacity(0.4), location: 0.3),
+                                        .init(color: .clear, location: 0.6)
                                     ],
                                     startPoint: .top,
                                     endPoint: .bottom
                                 )
                                 
-                                // Bottom Dark Fade for Atmosphere
+                                // Bottom Fade to transition to content
                                 LinearGradient(
                                     stops: [
                                         .init(color: .clear, location: 0.5),
-                                        .init(color: .black.opacity(0.5), location: 0.85),
-                                        .init(color: .black, location: 1.0)
+                                        .init(color: theme.currentFlavor.backgroundColor.opacity(0.8), location: 1.0)
                                     ],
                                     startPoint: .top,
                                     endPoint: .bottom
@@ -117,26 +117,36 @@ struct ItemDetailView: View {
                 }
 
                 // Similar Items
-                if !similarItems.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("More Like This")
+                if isLoading || !similarItems.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(displayItem.type == "Audio" || displayItem.type == "MusicAlbum" ? "More From This Artist" : "More Like This")
                             .font(.title3)
                             .fontWeight(.bold)
                             .padding(.horizontal)
 
                         ScrollView(.horizontal, showsIndicators: false) {
-                            LazyHStack(spacing: 12) {
-                                ForEach(similarItems, id: \.id) { similar in
-                                    NavigationLink(value: similar) {
-                                        ItemPosterCard(item: similar, apiClient: session.apiClient, width: 130)
+                            HStack(spacing: 16) {
+                                if isLoading && similarItems.isEmpty {
+                                    // Loading Placeholders
+                                    ForEach(0..<5, id: \.self) { _ in
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(.quaternary)
+                                            .frame(width: 140, height: displayItem.type == "Audio" || displayItem.type == "MusicAlbum" ? 140 : 210)
+                                            .shimmer()
                                     }
-                                    .buttonStyle(.plain)
+                                } else {
+                                    ForEach(similarItems, id: \.id) { similar in
+                                        NavigationLink(value: similar) {
+                                            ItemPosterCard(item: similar, apiClient: session.apiClient, width: (displayItem.type == "Audio" || displayItem.type == "MusicAlbum") ? 140 : 130)
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
                                 }
                             }
                             .padding(.horizontal)
                         }
                     }
-                    .padding(.top)
+                    .padding(.top, 24)
                 }
 
                 // Media Info
@@ -157,11 +167,14 @@ struct ItemDetailView: View {
 
                 Spacer(minLength: 40)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .ignoresSafeArea(edges: .top)
         .navigationTitle(displayItem.displayName)
         .toolbarBackground(.hidden, for: .windowToolbar)
         .toolbarBackground(.hidden, for: .automatic)
+        .scrollContentBackground(.hidden)
+        .background(theme.currentFlavor.backgroundColor.ignoresSafeArea())
         .task { await loadDetails() }
     }
 
@@ -179,10 +192,13 @@ struct ItemDetailView: View {
 
             // Title & metadata
             VStack(alignment: .leading, spacing: 8) {
+                let isBanner = (displayItem.type == "Movie" || displayItem.type == "Series" || displayItem.type == "MusicVideo")
+                let bannerTextColor = isBanner ? Color.white : theme.currentFlavor.textColor
+                
                 if let episodeLabel = displayItem.episodeLabel {
                     Text(episodeLabel)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(bannerTextColor.opacity(0.7))
                 }
 
                 if let logoURL {
@@ -192,19 +208,21 @@ struct ItemDetailView: View {
                     Text(displayItem.displayName)
                         .font(.largeTitle)
                         .fontWeight(.bold)
+                        .foregroundStyle(bannerTextColor)
                 }
 
                 if let seriesName = displayItem.seriesName {
                     Text(seriesName)
                         .font(.title3)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(bannerTextColor.opacity(0.7))
                 } else if displayItem.type == "Audio" || displayItem.type == "MusicAlbum" || displayItem.type == "MusicVideo", let artist = displayItem.albumArtist ?? displayItem.artists?.first {
                     Text(artist)
                         .font(.title3)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(bannerTextColor.opacity(0.8))
                 }
 
                 metadataRow
+                    .foregroundStyle(bannerTextColor.opacity(0.7))
 
                 actionButtons
             }
@@ -233,7 +251,7 @@ struct ItemDetailView: View {
                     .padding(.vertical, 2)
                     .background(
                         RoundedRectangle(cornerRadius: 4)
-                            .stroke(.secondary, lineWidth: 1)
+                            .stroke(theme.currentFlavor.isDark ? .white.opacity(0.5) : .black.opacity(0.5), lineWidth: 1)
                     )
             }
             if let critic = displayItem.criticRating {
@@ -241,11 +259,9 @@ struct ItemDetailView: View {
                     Image(systemName: "theatermasks.fill")
                     Text("\(Int(critic))%")
                 }
-                .foregroundStyle(.secondary)
             }
         }
         .font(.callout)
-        .foregroundStyle(.secondary)
     }
 
     private var actionButtons: some View {
@@ -440,7 +456,7 @@ struct PersonCard: View {
                 if let role = person.role, !role.isEmpty {
                     Text(role)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(ThemeManager.shared.currentFlavor.textColor.opacity(0.6))
                         .lineLimit(1)
                         .frame(width: 80)
                 }
@@ -501,8 +517,8 @@ struct MediaSourceInfoRow: View {
         }
         .padding()
         .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.quaternary.opacity(0.5))
+            RoundedRectangle(cornerRadius: 12)
+                .fill(ThemeManager.shared.currentFlavor.secondaryBackground.opacity(0.6))
         )
     }
 }

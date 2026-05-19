@@ -2,6 +2,7 @@ import SwiftUI
 
 struct PersonDetailView: View {
     @Environment(SessionManager.self) private var session
+    @State private var theme = ThemeManager.shared
     let person: BaseItemPerson
     
     @State private var items: [BaseItemDto] = []
@@ -20,7 +21,7 @@ struct PersonDetailView: View {
                     RemoteImageView(url: imageURL, section: .others, cornerRadius: 12, title: person.name, itemType: "Person")
                         .frame(width: 200, height: 300)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
-                        .shadow(color: .black.opacity(0.3), radius: 10, x: 0, y: 5)
+                        .shadow(color: theme.currentFlavor.isDark ? .black.opacity(0.5) : .black.opacity(0.2), radius: 10, x: 0, y: 5)
                     
                     VStack(alignment: .leading, spacing: 24) {
                         Text(person.name ?? "Unknown")
@@ -46,7 +47,7 @@ struct PersonDetailView: View {
                                     Label("Wikipedia", systemImage: "arrow.up.right.circle.fill")
                                         .padding(.horizontal, 16)
                                         .padding(.vertical, 8)
-                                        .background(.white.opacity(0.1), in: Capsule())
+                                        .background(theme.currentFlavor.secondaryBackground.opacity(0.7), in: Capsule())
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -56,7 +57,7 @@ struct PersonDetailView: View {
                                     Label("IMDb", systemImage: "star.fill")
                                         .padding(.horizontal, 16)
                                         .padding(.vertical, 8)
-                                        .background(.white.opacity(0.1), in: Capsule())
+                                        .background(theme.currentFlavor.secondaryBackground.opacity(0.7), in: Capsule())
                                 }
                                 .buttonStyle(.plain)
                                 .foregroundStyle(.yellow)
@@ -67,7 +68,7 @@ struct PersonDetailView: View {
                                     Label("TMDB", systemImage: "play.circle.fill")
                                         .padding(.horizontal, 16)
                                         .padding(.vertical, 8)
-                                        .background(.white.opacity(0.1), in: Capsule())
+                                        .background(theme.currentFlavor.secondaryBackground.opacity(0.7), in: Capsule())
                                 }
                                 .buttonStyle(.plain)
                                 .foregroundStyle(.cyan)
@@ -101,12 +102,27 @@ struct PersonDetailView: View {
                         .padding(.horizontal, 40)
                     
                     if isLoading {
-                        HStack {
-                            Spacer()
-                            ProgressView()
-                            Spacer()
+                        LazyVGrid(columns: columns, spacing: 32) {
+                            ForEach(0..<8, id: \.self) { _ in
+                                VStack(alignment: .leading, spacing: 8) {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(.quaternary)
+                                        .frame(height: 270)
+                                        .shimmer()
+                                    
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.quaternary)
+                                        .frame(width: 100, height: 14)
+                                        .shimmer()
+                                    
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.quaternary)
+                                        .frame(width: 60, height: 10)
+                                        .shimmer()
+                                }
+                            }
                         }
-                        .frame(height: 200)
+                        .padding(.horizontal, 40)
                     } else if items.isEmpty {
                         Text("No items found.")
                             .foregroundStyle(.secondary)
@@ -131,6 +147,8 @@ struct PersonDetailView: View {
         .task { await loadData() }
         .navigationTitle(person.name ?? "Person")
         .toolbarBackground(.hidden)
+        .scrollContentBackground(.hidden)
+        .background(theme.currentFlavor.backgroundColor.ignoresSafeArea())
     }
     
     private func loadData() async {

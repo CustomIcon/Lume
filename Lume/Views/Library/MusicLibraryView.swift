@@ -48,8 +48,23 @@ struct MusicLibraryView: View {
                 Divider()
 
                 if isLoading {
-                    ProgressView("Loading music...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ScrollView {
+                        LazyVGrid(columns: gridColumns, spacing: 20) {
+                            ForEach(0..<12, id: \.self) { _ in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(.quaternary)
+                                        .frame(height: 160)
+                                        .shimmer()
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.quaternary)
+                                        .frame(width: 100, height: 12)
+                                        .shimmer()
+                                }
+                            }
+                        }
+                        .padding()
+                    }
                 } else {
                     ScrollView {
                         switch selectedTab {
@@ -73,8 +88,23 @@ struct MusicLibraryView: View {
             } else {
                 // Search Results View for Music
                 if isSearching && searchResults.isEmpty {
-                    ProgressView("Searching...")
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ScrollView {
+                        LazyVGrid(columns: gridColumns, spacing: 20) {
+                            ForEach(0..<12, id: \.self) { _ in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .fill(.quaternary)
+                                        .frame(height: 160)
+                                        .shimmer()
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.quaternary)
+                                        .frame(width: 100, height: 12)
+                                        .shimmer()
+                                }
+                            }
+                        }
+                        .padding()
+                    }
                 } else if searchResults.isEmpty {
                     ContentUnavailableView.search(text: searchText)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -427,6 +457,7 @@ struct SongRow: View {
 
 struct AlbumDetailView: View {
     @Environment(SessionManager.self) private var session
+    @State private var theme = ThemeManager.shared
     let album: BaseItemDto
     @State private var tracks: [BaseItemDto] = []
     @State private var imageURL: URL?
@@ -493,7 +524,33 @@ struct AlbumDetailView: View {
                 }.padding()
                 Divider()
                 if isLoading {
-                    ProgressView().frame(maxWidth: .infinity)
+                    VStack(spacing: 8) {
+                        ForEach(0..<8, id: \.self) { _ in
+                            HStack(spacing: 12) {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(.quaternary)
+                                    .frame(width: 30, height: 16)
+                                    .shimmer()
+                                VStack(alignment: .leading, spacing: 4) {
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.quaternary)
+                                        .frame(width: 200, height: 14)
+                                        .shimmer()
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.quaternary)
+                                        .frame(width: 120, height: 10)
+                                        .shimmer()
+                                }
+                                Spacer()
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(.quaternary)
+                                    .frame(width: 40, height: 12)
+                                    .shimmer()
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                    .padding(.horizontal)
                 } else {
                     LazyVStack(spacing: 1) {
                         ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
@@ -509,6 +566,8 @@ struct AlbumDetailView: View {
         }
         .navigationTitle(album.displayName)
         .toolbarBackground(.hidden)
+        .scrollContentBackground(.hidden)
+        .background(theme.currentFlavor.backgroundColor.ignoresSafeArea())
         .task {
             isFavorite = album.userData?.isFavorite ?? false
             if let id = album.id {
@@ -537,6 +596,7 @@ struct AlbumDetailView: View {
 
 struct MusicCollectionDetailView: View {
     @Environment(SessionManager.self) private var session
+    @State private var theme = ThemeManager.shared
     let collection: BaseItemDto
     @State private var albums: [BaseItemDto] = []
     @State private var tracks: [BaseItemDto] = []
@@ -607,7 +667,29 @@ struct MusicCollectionDetailView: View {
                 }.padding()
                 Divider()
                 if isLoading {
-                    ProgressView().frame(maxWidth: .infinity)
+                    VStack(spacing: 8) {
+                        ForEach(0..<6, id: \.self) { _ in
+                            HStack(spacing: 12) {
+                                RoundedRectangle(cornerRadius: 4)
+                                    .fill(.quaternary)
+                                    .frame(width: 30, height: 16)
+                                    .shimmer()
+                                VStack(alignment: .leading, spacing: 4) {
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.quaternary)
+                                        .frame(width: 200, height: 14)
+                                        .shimmer()
+                                    RoundedRectangle(cornerRadius: 3)
+                                        .fill(.quaternary)
+                                        .frame(width: 120, height: 10)
+                                        .shimmer()
+                                }
+                                Spacer()
+                            }
+                            .padding(.vertical, 6)
+                        }
+                    }
+                    .padding(.horizontal)
                 } else {
                     if !albums.isEmpty {
                         VStack(alignment: .leading, spacing: 16) {
@@ -652,6 +734,8 @@ struct MusicCollectionDetailView: View {
         }
         .navigationTitle(collection.displayName)
         .toolbarBackground(.hidden)
+        .scrollContentBackground(.hidden)
+        .background(theme.currentFlavor.backgroundColor.ignoresSafeArea())
         .task {
             isFavorite = collection.userData?.isFavorite ?? false
             if let id = collection.id {
